@@ -7,6 +7,7 @@ import express from "express";
 import cors from "cors";
 import handler from "./api/chat.js";
 import stateHandler from "./api/state.js";
+import authHandler from "./api/auth.js";
 
 // Load .env manually so `node server.js` works without --env-file flag
 try {
@@ -31,6 +32,10 @@ app.post("/api/chat", (req, res) => {
   res.setHeader = originalSetHeader;
   return handler(req, res);
 });
+
+// Auth gate — passcode verification (if configured)
+app.get("/api/auth", (req, res) => authHandler(req, res));
+app.post("/api/auth", (req, res) => authHandler(req, res));
 
 // State persistence — load/save app state from database (if configured)
 app.get("/api/state", (req, res) => stateHandler(req, res));

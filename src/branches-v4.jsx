@@ -372,7 +372,88 @@ function ContextEditor({ entries, onChange, label }) {
   );
 }
 
-export default function BranchesPrototype() {
+function PasscodeGate({ children }) {
+  const [authState, setAuthState] = useState("checking"); // checking | gate | authenticated
+  const [passcode, setPasscode] = useState("");
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetch("/api/auth")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.authenticated) setAuthState("authenticated");
+        else if (data.gateEnabled) setAuthState("gate");
+        else setAuthState("authenticated");
+      })
+      .catch(() => setAuthState("authenticated")); // If auth endpoint fails, allow access
+  }, []);
+
+  const submit = () => {
+    if (!passcode.trim()) return;
+    setError(null);
+    fetch("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passcode: passcode.trim() }),
+    })
+      .then((r) => {
+        if (r.ok) setAuthState("authenticated");
+        else setError("Incorrect passcode");
+      })
+      .catch(() => setError("Connection error"));
+  };
+
+  if (authState === "checking") {
+    return (
+      <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 13, color: t.textTertiary }}>Loading...</div>
+      </div>
+    );
+  }
+
+  if (authState === "gate") {
+    return (
+      <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: 340, textAlign: "center" }}>
+          <div style={{ fontSize: 18, fontWeight: 600, color: t.text, marginBottom: 4 }}>Branches</div>
+          <div style={{ fontSize: 13, color: t.textTertiary, marginBottom: 24 }}>Enter passcode to continue</div>
+          <input
+            type="password"
+            value={passcode}
+            onChange={(e) => setPasscode(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            placeholder="Passcode"
+            autoFocus
+            style={{
+              width: "100%", padding: "11px 14px", fontSize: 14, fontFamily: t.font,
+              background: t.surfaceMuted, border: "1px solid " + t.border, borderRadius: t.radius,
+              color: t.text, outline: "none", boxSizing: "border-box", marginBottom: 12,
+            }}
+            onFocus={(e) => e.target.style.borderColor = t.accentBorder}
+            onBlur={(e) => e.target.style.borderColor = t.border}
+          />
+          {error && <div style={{ fontSize: 13, color: "#c0392b", marginBottom: 12 }}>{error}</div>}
+          <button onClick={submit} style={{
+            width: "100%", padding: "11px", borderRadius: t.radius, border: "none",
+            background: t.accent, color: t.white, fontSize: 14, fontWeight: 600, cursor: "pointer",
+          }}>Enter</button>
+        </div>
+      </div>
+    );
+  }
+
+  return children;
+}
+
+export default function App() {
+  return (
+    <PasscodeGate>
+      <BranchesPrototype />
+    </PasscodeGate>
+  );
+}
+
+function BranchesPrototype() {
   const [nodes, setNodes] = useState([SEED_PROJECT, ...SEED_BRANCHES, LAUNCH_PROJECT, ...LAUNCH_BRANCHES]);
   const [projects, setProjects] = useState(PROJECTS);
   const [activeProjectId, setActiveProjectId] = useState("vacation");

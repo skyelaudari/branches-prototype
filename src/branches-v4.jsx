@@ -141,6 +141,8 @@ function buildSystemPrompt(node, ancestors) {
     p += "\nConfirmed here:\n" + node.confirmedItems.map((i) => "- " + i).join("\n") + "\n";
   }
   p += "\nBe helpful, concise, and specific.";
+  // Context suggestion instructions — applies to all modes
+  p += '\n\nIMPORTANT: When your response contains key decisions, confirmed facts, important findings, or actionable conclusions that would benefit other conversations in this project, wrap each one in <<SUGGEST_CONTEXT>> tags. These should be concise, standalone statements (not full paragraphs). Examples:\n- <<SUGGEST_CONTEXT>>Rome dates confirmed: June 14-18, Trastevere apartment booked via VRBO<<SUGGEST_CONTEXT>>\n- <<SUGGEST_CONTEXT>>Budget split: 40% accommodation, 25% transport, 20% food, 15% activities<<SUGGEST_CONTEXT>>\nOnly suggest items that represent decisions, confirmed plans, key constraints, or important findings — not routine discussion points. Aim for 0-3 suggestions per response. Do NOT suggest context that is already listed in the project context or confirmed items above.';
   if (node.mode === "cowork") {
     p += "\n\nYou have access to web search and document creation. When the user asks about current prices, availability, reviews, specific venues, or anything that benefits from live data, use the web_search tool to find relevant information. Synthesize the results into a clear, actionable response. Cite sources where appropriate.";
     p += "\n\nYou can also create professional documents: PowerPoint presentations (.pptx), Excel spreadsheets (.xlsx), Word documents (.docx), and PDFs. When the user requests a document, create it using your code execution environment.";
@@ -668,14 +670,23 @@ function BranchesPrototype() {
       const files = data._files || null;
       const containerId = data._containerId || null;
       let coworkQuestion = null;
-      const coworkMatch = reply.match(/<<COWORK_Q>>([\s\S]*?)<<SUGGEST_COWORK>>/);
+      const coworkMatch = reply.match(/<<COWORK_Q>>([\s\S]*?)<<(?:SUGGEST_COWORK|COWORK_Q)>>/);
       if (coworkMatch) {
         coworkQuestion = coworkMatch[1].trim();
-        reply = reply.replace(/\s*<<COWORK_Q>>[\s\S]*?<<SUGGEST_COWORK>>\s*/g, "").trim();
+        reply = reply.replace(/\s*<<COWORK_Q>>[\s\S]*?<<(?:SUGGEST_COWORK|COWORK_Q)>>\s*/g, "").trim();
       }
+      // Extract suggested context items
+      const suggestedContext = [];
+      const ctxRegex = /<<SUGGEST_CONTEXT>>([\s\S]*?)<<SUGGEST_CONTEXT>>/g;
+      let ctxMatch;
+      while ((ctxMatch = ctxRegex.exec(reply)) !== null) {
+        const item = ctxMatch[1].trim();
+        if (item) suggestedContext.push(item);
+      }
+      reply = reply.replace(/\s*<<SUGGEST_CONTEXT>>[\s\S]*?<<SUGGEST_CONTEXT>>\s*/g, "").trim();
       setNodes((prev) => prev.map((n) => {
         if (n.id !== targetId) return n;
-        const updated = { ...n, messages: [...n.messages, { role: "assistant", content: reply, _toolCalls: toolCalls, _searchContext: searchContext, _files: files || undefined, _suggestCowork: coworkQuestion || undefined }] };
+        const updated = { ...n, messages: [...n.messages, { role: "assistant", content: reply, _toolCalls: toolCalls, _searchContext: searchContext, _files: files || undefined, _suggestCowork: coworkQuestion || undefined, _suggestedContext: suggestedContext.length > 0 ? suggestedContext : undefined }] };
         if (containerId) updated.containerId = containerId;
         return updated;
       }));
@@ -1194,6 +1205,42 @@ function BranchesPrototype() {
                       </button>
                     )}
                   </div>
+                  {msg._suggestedContext && msg._suggestedContext.length > 0 && (
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                      {msg._suggestedContext.map((ctx, ci) => (
+                        <div key={ci} style={{ background: t.greenSoft || "rgba(76,141,107,0.08)", border: "1px solid " + t.greenBorder, borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "flex-start", gap: 10 }}>
+                          <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>💡</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ fontSize: 13, lineHeight: 1.5, color: t.text, margin: 0 }}>{ctx}</p>
+                          </div>
+                          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                            <button onClick={() => {
+                              propagateItem(ctx);
+                              // Remove this suggestion from the message
+                              setNodes((prev) => prev.map((n) => {
+                                if (n.id !== activeId) return n;
+                                return { ...n, messages: n.messages.map((m, mi) => mi !== i ? m : { ...m, _suggestedContext: m._suggestedContext.filter((_, si) => si !== ci) }) };
+                              }));
+                            }}
+                              style={{ padding: "5px 12px", borderRadius: 16, border: "none", background: t.green, color: t.white, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", transition: "opacity 0.15s" }}
+                              onMouseEnter={(e) => e.currentTarget.style.opacity = "0.85"}
+                              onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
+                            >Save to project ↑</button>
+                            <button onClick={() => {
+                              setNodes((prev) => prev.map((n) => {
+                                if (n.id !== activeId) return n;
+                                return { ...n, messages: n.messages.map((m, mi) => mi !== i ? m : { ...m, _suggestedContext: m._suggestedContext.filter((_, si) => si !== ci) }) };
+                              }));
+                            }}
+                              style={{ padding: "5px 8px", borderRadius: 16, border: "1px solid " + t.border, background: "transparent", color: t.textTertiary, fontSize: 11, cursor: "pointer", transition: "color 0.15s" }}
+                              onMouseEnter={(e) => e.currentTarget.style.color = t.text}
+                              onMouseLeave={(e) => e.currentTarget.style.color = t.textTertiary}
+                            >×</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {msg._suggestCowork && (
                     <div style={{ marginTop: 10, background: t.accentSoft, border: "1px solid " + t.accentBorder, borderRadius: 12, padding: "12px 16px" }}>
                       <p style={{ fontSize: 13, lineHeight: 1.55, color: t.text, margin: "0 0 10px 0" }}>{msg._suggestCowork}</p>

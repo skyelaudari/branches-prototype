@@ -389,7 +389,55 @@ export default function BranchesPrototype() {
   const [hoveredMsg, setHoveredMsg] = useState(null);
   const [copiedMsg, setCopiedMsg] = useState(null);
   const [linkConfirm, setLinkConfirm] = useState(null);
+  const [appLoading, setAppLoading] = useState(true);
   const msgRef = useRef(null);
+  const dbEnabled = useRef(false);
+  const isInitialLoad = useRef(true);
+  const saveTimer = useRef(null);
+
+  // Load state from DB on mount (or fall back to seed data)
+  useEffect(() => {
+    fetch("/api/state")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.useSeeds) {
+          dbEnabled.current = true;
+          if (data.projects && data.projects.length > 0) {
+            setProjects(data.projects);
+            setNodes(data.nodes || []);
+            setActiveProjectId(data.projects[0].id);
+            setActiveId(data.projects[0].trunkId);
+          } else {
+            // DB exists but empty — start fresh
+            setProjects([]);
+            setNodes([]);
+            setActiveProjectId(null);
+            setActiveId(null);
+          }
+        }
+        // If useSeeds, keep the default seed state
+        setAppLoading(false);
+        requestAnimationFrame(() => { isInitialLoad.current = false; });
+      })
+      .catch(() => {
+        setAppLoading(false);
+        requestAnimationFrame(() => { isInitialLoad.current = false; });
+      });
+  }, []);
+
+  // Auto-save to DB on state changes (debounced 1s)
+  useEffect(() => {
+    if (isInitialLoad.current || !dbEnabled.current) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      fetch("/api/state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projects, nodes }),
+      }).catch(console.error);
+    }, 1000);
+    return () => clearTimeout(saveTimer.current);
+  }, [projects, nodes]);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const active = nodes.find((n) => n.id === activeId);
@@ -602,6 +650,18 @@ export default function BranchesPrototype() {
   const allInheritedConfirmed = ancestors.flatMap((a) => (a.confirmedItems || []));
   const allInheritedContextLabels = ancestors.flatMap((a) => (a.contextEntries || []).map((e) => e.label));
 
+  // Loading screen while fetching state
+  if (appLoading) {
+    return (
+      <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Branches</div>
+          <div style={{ fontSize: 13, color: t.textTertiary }}>Loading...</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {/* Header */}
@@ -638,12 +698,29 @@ export default function BranchesPrototype() {
             ))}
           </div>
           {/* Branch tree */}
-          <div style={{ padding: "10px 16px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: t.textTertiary, letterSpacing: "0.04em", textTransform: "uppercase" }}>Branches</span>
-            <button onClick={() => { setBranchParent(activeId); setModal("branch"); }} style={{ padding: "5px 12px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>+ Branch</button>
-          </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px" }}>{renderTree(null, 0)}</div>
+          {activeProject && (
+            <>
+              <div style={{ padding: "10px 16px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: t.textTertiary, letterSpacing: "0.04em", textTransform: "uppercase" }}>Branches</span>
+                <button onClick={() => { setBranchParent(activeId); setModal("branch"); }} style={{ padding: "5px 12px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>+ Branch</button>
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px" }}>{renderTree(null, 0)}</div>
+            </>
+          )}
         </div>
+
+        {/* Main — empty state when no projects */}
+        {!active && (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: t.bg }}>
+            <div style={{ textAlign: "center", maxWidth: 400 }}>
+              <div style={{ fontSize: 20, fontWeight: 600, color: t.text, marginBottom: 8 }}>Welcome to Branches</div>
+              <div style={{ fontSize: 14, color: t.textSecondary, lineHeight: 1.6, marginBottom: 24 }}>
+                Create your first project to get started. Each project has a trunk for shared context and branches for parallel workstreams.
+              </div>
+              <button onClick={() => setModal("project")} style={{ padding: "10px 20px", borderRadius: t.radius, border: "none", background: t.accent, color: t.white, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Create your first project</button>
+            </div>
+          </div>
+        )}
 
         {/* Main */}
         {active && (

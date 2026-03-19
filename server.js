@@ -6,6 +6,7 @@ import { readFileSync } from "fs";
 import express from "express";
 import cors from "cors";
 import handler from "./api/chat.js";
+import stateHandler from "./api/state.js";
 
 // Load .env manually so `node server.js` works without --env-file flag
 try {
@@ -30,6 +31,10 @@ app.post("/api/chat", (req, res) => {
   res.setHeader = originalSetHeader;
   return handler(req, res);
 });
+
+// State persistence — load/save app state from database (if configured)
+app.get("/api/state", (req, res) => stateHandler(req, res));
+app.put("/api/state", (req, res) => stateHandler(req, res));
 
 // File download proxy — fetches files from Anthropic's Files API and streams to browser
 app.get("/api/files/:fileId", async (req, res) => {
@@ -101,4 +106,6 @@ app.listen(PORT, () => {
   console.log(`API proxy running at http://localhost:${PORT}`);
   console.log(`  POST /api/chat — Claude Messages API`);
   console.log(`  GET  /api/files/:id — File download proxy`);
+  console.log(`  GET  /api/state — Load app state`);
+  console.log(`  PUT  /api/state — Save app state`);
 });

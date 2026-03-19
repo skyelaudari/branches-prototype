@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3a5a8c"/>
+      <stop offset="100%" stop-color="#1a2744"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="url(#bg)"/>
+  <g stroke="rgba(255,255,255,0.9)" stroke-width="2" stroke-linecap="round" fill="none">
+    <!-- trunk -->
+    <line x1="16" y1="26" x2="16" y2="12"/>
+    <!-- left branch -->
+    <line x1="16" y1="16" x2="10" y2="10"/>
+    <!-- right branch -->
+    <line x1="16" y1="12" x2="22" y2="7"/>
+    <!-- small left sub-branch -->
+    <line x1="10" y1="10" x2="7" y2="7"/>
+  </g>
+  <!-- nodes -->
+  <circle cx="16" cy="26" r="2.5" fill="#d97757"/>
+  <circle cx="10" cy="10" r="2.5" fill="rgba(255,255,255,0.9)"/>
+  <circle cx="22" cy="7" r="2.5" fill="rgba(255,255,255,0.9)"/>
+  <circle cx="7" cy="7" r="2.5" fill="rgba(255,255,255,0.9)"/>
+</svg>

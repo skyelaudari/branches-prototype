@@ -607,10 +607,9 @@ function BranchesPrototype() {
 
   // Text selection handler
   const handleMouseUpInMessages = useCallback(() => {
-    if (active?.type === "trunk") return;
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !selection.toString().trim()) {
-      return; // don't dismiss on empty selection to avoid flicker
+      return;
     }
     const text = selection.toString().trim();
     if (text.length < 3) return;
@@ -627,15 +626,28 @@ function BranchesPrototype() {
       top: rect.top - 40,
       left: rect.left + rect.width / 2 - 75,
     });
-  }, [active?.type]);
+  }, []);
 
-  // Dismiss popover on click outside or scroll
+  // Dismiss popover on next mousedown (unless clicking popover itself) or scroll
   useEffect(() => {
-    const dismiss = () => setPopover(null);
+    if (!popover) return;
+    const onMouseDown = (e) => {
+      if (e.target.closest("[data-popover]")) return;
+      setPopover(null);
+    };
+    const onScroll = () => setPopover(null);
     const container = msgRef.current;
-    if (container) container.addEventListener("scroll", dismiss);
-    return () => { if (container) container.removeEventListener("scroll", dismiss); };
-  }, [activeId]);
+    // Use setTimeout so this listener doesn't catch the mousedown that just created the popover
+    const timer = setTimeout(() => {
+      document.addEventListener("mousedown", onMouseDown);
+      if (container) container.addEventListener("scroll", onScroll);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", onMouseDown);
+      if (container) container.removeEventListener("scroll", onScroll);
+    };
+  }, [popover]);
 
   // Close sidebar menu on click outside
   useEffect(() => {
@@ -1335,14 +1347,14 @@ function BranchesPrototype() {
 
             {/* Selection popover - fixed positioning */}
             {popover && (
-              <div style={{
+              <div data-popover style={{
                 position: "fixed", top: popover.top, left: Math.max(8, popover.left), zIndex: 50,
                 background: t.surface, border: "1px solid " + t.greenBorder, borderRadius: t.radiusSm,
                 padding: "4px 6px", boxShadow: t.shadowLg, display: "flex", gap: 4,
               }}>
                 <button onClick={() => { propagateItem(popover.text); setPopover(null); window.getSelection()?.removeAllRanges(); }}
                   style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: t.green, color: t.white, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
-                  Save to project ↑
+                  {active?.type === "trunk" ? "Save as context ✓" : "Save to project ↑"}
                 </button>
                 <button onClick={() => { setPopover(null); window.getSelection()?.removeAllRanges(); }}
                   style={{ padding: "4px 6px", borderRadius: 5, border: "none", background: "transparent", color: t.textTertiary, fontSize: 11, cursor: "pointer" }}>×</button>

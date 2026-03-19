@@ -461,8 +461,6 @@ function BranchesPrototype() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState(null);
-  const [branchName, setBranchName] = useState("");
-  const [branchParent, setBranchParent] = useState(null);
   const [projectName, setProjectName] = useState("");
   const [showContext, setShowContext] = useState(false);
   const [toast, setToast] = useState(null);
@@ -471,7 +469,14 @@ function BranchesPrototype() {
   const [copiedMsg, setCopiedMsg] = useState(null);
   const [linkConfirm, setLinkConfirm] = useState(null);
   const [appLoading, setAppLoading] = useState(true);
+  const [sidebarMenu, setSidebarMenu] = useState(null);
+  const [renaming, setRenaming] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [contextBarOpen, setContextBarOpen] = useState(false);
   const msgRef = useRef(null);
+  const chatInputRef = useRef(null);
   const dbEnabled = useRef(false);
   const isInitialLoad = useRef(true);
   const saveTimer = useRef(null);
@@ -576,6 +581,14 @@ function BranchesPrototype() {
     return () => { if (container) container.removeEventListener("scroll", dismiss); };
   }, [activeId]);
 
+  // Close sidebar menu on click outside
+  useEffect(() => {
+    if (!sidebarMenu) return;
+    const close = () => setSidebarMenu(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [sidebarMenu]);
+
   const updateNode = (id, updates) => setNodes((prev) => prev.map((n) => n.id === id ? { ...n, ...updates } : n));
 
   const send = useCallback(async () => {
@@ -587,6 +600,19 @@ function BranchesPrototype() {
     setLoading(true);
     try {
       const nd = updated.find((n) => n.id === activeId);
+      // Auto-name branch from first message via lightweight Haiku call
+      if (nd.type === "branch" && nd.messages.length === 1 && nd.name === "New branch") {
+        fetch("/api/name", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: txt }),
+        }).then((r) => r.json()).then((data) => {
+          const label = data.name || txt.substring(0, 40);
+          setNodes((prev) => prev.map((n) => n.id === activeId && n.name === "New branch" ? { ...n, name: label } : n));
+        }).catch(() => {
+          setNodes((prev) => prev.map((n) => n.id === activeId && n.name === "New branch" ? { ...n, name: txt.substring(0, 40) } : n));
+        });
+      }
       const anc = getAncestorChain(activeId, updated);
       const sys = buildSystemPrompt(nd, anc);
       // Build messages, injecting search context from prior tool calls so Claude remembers raw results
@@ -680,11 +706,94 @@ function BranchesPrototype() {
       setTimeout(() => setCopiedMsg(null), 1500);
     });
   }, []);
-  const createBranch = () => {
-    if (!branchName.trim()) return;
+  const quickCreateBranch = (parentId) => {
     const id = "b-" + Date.now();
-    setNodes((prev) => [...prev, { id, name: branchName.trim(), type: "branch", parentId: branchParent, mode: "chat", containerId: null, projectId: activeProjectId, contextEntries: [], confirmedItems: [], messages: [] }]);
-    setBranchName(""); setModal(null); setActiveId(id);
+    const parent = nodes.find((n) => n.id === parentId);
+    const projId = parent?.projectId || activeProjectId;
+    setNodes((prev) => [...prev, { id, name: "New branch", type: "branch", parentId, mode: "chat", containerId: null, projectId: projId, contextEntries: [], confirmedItems: [], messages: [] }]);
+    setActiveId(id);
+    setSidebarMenu(null);
+    setTimeout(() => chatInputRef.current?.focus(), 50);
+  };
+
+  const startRename = (nodeId) => {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (node) { setRenaming(nodeId); setRenameValue(node.name); setSidebarMenu(null); }
+  };
+
+  const commitRename = () => {
+    if (renaming && renameValue.trim()) {
+      updateNode(renaming, { name: renameValue.trim() });
+      const node = nodes.find((n) => n.id === renaming);
+      if (node?.type === "trunk") {
+        setProjects((prev) => prev.map((p) => p.trunkId === renaming ? { ...p, name: renameValue.trim() } : p));
+      }
+    }
+    setRenaming(null); setRenameValue("");
+  };
+
+  const requestDelete = (nodeId) => {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    setSidebarMenu(null);
+    if (node.type === "trunk") {
+      setDeleteConfirm({ nodeId, type: "project", sharedItems: [] });
+      return;
+    }
+    const parent = nodes.find((n) => n.id === node.parentId);
+    const sharedItems = (node.confirmedItems || []).filter((item) => (parent?.confirmedItems || []).includes(item));
+    setDeleteConfirm({ nodeId, type: "branch", sharedItems });
+  };
+
+  const executeDelete = (removeSharedContext) => {
+    if (!deleteConfirm) return;
+    const { nodeId, type, sharedItems } = deleteConfirm;
+    if (type === "project") {
+      const node = nodes.find((n) => n.id === nodeId);
+      const projId = node?.projectId;
+      setNodes((prev) => prev.filter((n) => n.projectId !== projId));
+      const remaining = projects.filter((p) => p.id !== projId);
+      setProjects(remaining);
+      if (remaining.length > 0) { setActiveProjectId(remaining[0].id); setActiveId(remaining[0].trunkId); }
+      else { setActiveProjectId(null); setActiveId(null); }
+    } else {
+      const node = nodes.find((n) => n.id === nodeId);
+      // Collect all descendant IDs to delete
+      const getDescendants = (id) => {
+        const children = nodes.filter((n) => n.parentId === id);
+        return [id, ...children.flatMap((c) => getDescendants(c.id))];
+      };
+      const idsToDelete = new Set(getDescendants(nodeId));
+      setNodes((prev) => {
+        let result = prev;
+        if (removeSharedContext && sharedItems.length > 0 && node) {
+          result = result.map((n) => n.id === node.parentId ? { ...n, confirmedItems: (n.confirmedItems || []).filter((item) => !sharedItems.includes(item)) } : n);
+        }
+        return result.filter((n) => !idsToDelete.has(n.id));
+      });
+      if (activeId === nodeId && node) setActiveId(node.parentId);
+    }
+    setDeleteConfirm(null);
+  };
+
+  const promoteToProject = (nodeId) => {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (!node || node.type === "trunk") return;
+    setSidebarMenu(null);
+    const trunkId = "trunk-" + Date.now();
+    const projId = "proj-" + Date.now();
+    // Gather inherited context from the branch's ancestor chain
+    const ancestors = getAncestorChain(nodeId, nodes);
+    const inheritedContext = ancestors.flatMap((a) => a.contextEntries || []);
+    const inheritedConfirmed = ancestors.flatMap((a) => a.confirmedItems || []);
+    // Merge inherited + branch's own context (deduplicate confirmed items)
+    const mergedContext = [...inheritedContext, ...(node.contextEntries || [])];
+    const mergedConfirmed = [...new Set([...inheritedConfirmed, ...(node.confirmedItems || [])])];
+    // Create new trunk with the branch's full state
+    setNodes((prev) => [...prev, { id: trunkId, name: node.name, type: "trunk", parentId: null, mode: "chat", containerId: node.containerId || null, projectId: projId, contextEntries: mergedContext, confirmedItems: mergedConfirmed, messages: [...node.messages] }]);
+    setProjects((prev) => [...prev, { id: projId, name: node.name, trunkId }]);
+    setActiveProjectId(projId);
+    setActiveId(trunkId);
   };
 
   const createProject = () => {
@@ -702,26 +811,59 @@ function BranchesPrototype() {
     const items = parentId === null ? nodes.filter((n) => n.id === activeProject.trunkId) : nodes.filter((n) => n.parentId === parentId);
     return items.map((node) => {
       const isActive = activeId === node.id;
+      const isRenaming = renaming === node.id;
+      const menuOpen = sidebarMenu === node.id;
       return (
-        <div key={node.id}>
-          <div onClick={() => setActiveId(node.id)}
-            style={{ padding: "10px 14px", paddingLeft: 14 + depth * 22, borderRadius: t.radiusSm, cursor: "pointer", background: isActive ? t.accentSoft : "transparent", marginBottom: 1 }}
+        <div key={node.id} className="sb-item" style={{ position: "relative" }}>
+          <div onClick={() => { if (!isRenaming) { setActiveId(node.id); setSidebarOpen(false); } }}
+            style={{ padding: "10px 14px", paddingLeft: 14 + depth * 22, borderRadius: t.radiusSm, cursor: "pointer", background: isActive ? t.accentSoft : "transparent", marginBottom: 1, display: "flex", alignItems: "center", justifyContent: "space-between" }}
             onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = t.surfaceMuted; }}
             onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = isActive ? t.accentSoft : "transparent"; }}>
-            <div style={{ display: "flex", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
               {depth > 0 && <span style={{ color: t.textPlaceholder, marginRight: 8, fontSize: 11 }}>↳</span>}
-              <div>
-                <div style={{ fontSize: 13, fontWeight: isActive ? 600 : 500, color: isActive ? t.text : t.textSecondary, lineHeight: 1.3 }}>{node.name}</div>
-                {(node.messages.length > 0 || (node.confirmedItems || []).length > 0) && (
-                  <div style={{ fontSize: 11, color: t.textTertiary, marginTop: 2 }}>
-                    {node.messages.length > 0 && (node.messages.length + " msg" + (node.messages.length !== 1 ? "s" : ""))}
-                    {node.messages.length > 0 && (node.confirmedItems || []).length > 0 && " · "}
-                    {(node.confirmedItems || []).length > 0 && ((node.confirmedItems || []).length + " confirmed")}
-                  </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {isRenaming ? (
+                  <input value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setRenaming(null); setRenameValue(""); } }}
+                    onBlur={commitRename} autoFocus onClick={(e) => e.stopPropagation()}
+                    style={{ fontSize: 13, fontWeight: 600, color: t.text, background: t.surfaceMuted, border: "1px solid " + t.accentBorder, borderRadius: 4, padding: "2px 6px", outline: "none", width: "100%", fontFamily: t.font, boxSizing: "border-box" }} />
+                ) : (
+                  <>
+                    <div style={{ fontSize: 13, fontWeight: isActive ? 600 : 500, color: isActive ? t.text : t.textSecondary, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.name}</div>
+                    {(node.messages.length > 0 || (node.confirmedItems || []).length > 0) && (
+                      <div style={{ fontSize: 11, color: t.textTertiary, marginTop: 2 }}>
+                        {node.messages.length > 0 && (node.messages.length + " msg" + (node.messages.length !== 1 ? "s" : ""))}
+                        {node.messages.length > 0 && (node.confirmedItems || []).length > 0 && " · "}
+                        {(node.confirmedItems || []).length > 0 && ((node.confirmedItems || []).length + " confirmed")}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
+            {!isRenaming && (
+              <button className={"sb-dots" + (menuOpen ? " sb-dots-active" : "")}
+                onClick={(e) => { e.stopPropagation(); setSidebarMenu(menuOpen ? null : node.id); }}
+                style={{ background: "transparent", border: "none", color: t.textTertiary, cursor: "pointer", fontSize: 13, padding: "0 4px", flexShrink: 0 }}>
+                ···
+              </button>
+            )}
           </div>
+          {menuOpen && (
+            <div style={{ position: "absolute", right: 8, top: "100%", zIndex: 50, background: t.surface, border: "1px solid " + t.border, borderRadius: t.radiusSm, boxShadow: t.shadowLg, overflow: "hidden", minWidth: 120 }}>
+              <button onClick={(e) => { e.stopPropagation(); startRename(node.id); }}
+                style={{ display: "block", width: "100%", padding: "8px 14px", border: "none", background: "transparent", color: t.text, fontSize: 12, fontWeight: 500, cursor: "pointer", textAlign: "left" }}
+                onMouseEnter={(e) => e.currentTarget.style.background = t.surfaceMuted} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>Rename</button>
+              {node.type === "branch" && (
+                <button onClick={(e) => { e.stopPropagation(); promoteToProject(node.id); }}
+                  style={{ display: "block", width: "100%", padding: "8px 14px", border: "none", background: "transparent", color: t.text, fontSize: 12, fontWeight: 500, cursor: "pointer", textAlign: "left" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = t.surfaceMuted} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>Promote to Project</button>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); requestDelete(node.id); }}
+                style={{ display: "block", width: "100%", padding: "8px 14px", border: "none", background: "transparent", color: "#c0392b", fontSize: 12, fontWeight: 500, cursor: "pointer", textAlign: "left" }}
+                onMouseEnter={(e) => e.currentTarget.style.background = t.surfaceMuted} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>Delete</button>
+            </div>
+          )}
           {renderTree(node.id, depth + 1)}
         </div>
       );
@@ -745,45 +887,104 @@ function BranchesPrototype() {
 
   return (
     <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <style>{`
+        .sb-item .sb-dots{opacity:0;transition:opacity .1s}.sb-item:hover .sb-dots,.sb-dots.sb-dots-active{opacity:.6}.sb-dots:hover{opacity:1!important}
+        @media(max-width:768px){
+          .sidebar-panel{position:fixed!important;left:0;top:0;bottom:0;z-index:100;width:300px!important;transform:translateX(-100%);transition:transform .25s ease;box-shadow:none!important}
+          .sidebar-panel.sidebar-open{transform:translateX(0);box-shadow:4px 0 24px rgba(0,0,0,.15)!important}
+          .sidebar-overlay{display:none;position:fixed;inset:0;z-index:99;background:rgba(0,0,0,.3)}
+          .sidebar-overlay.sidebar-open{display:block}
+          .mobile-menu-btn{display:flex!important}
+          .main-header-title{font-size:15px!important}
+          .main-header{padding:14px 16px 10px!important}
+          .main-header-actions{gap:4px!important}
+          .main-header-actions button{padding:5px 8px!important;font-size:11px!important}
+          .msg-area{padding:16px 12px!important}
+          .input-area{padding:10px 12px 14px!important}
+          .context-panel{padding:14px 12px!important}
+        }
+        @media(min-width:769px){
+          .mobile-menu-btn{display:none!important}
+          .sidebar-overlay{display:none!important}
+        }
+      `}</style>
       {/* Header */}
-      <div style={{ padding: "16px 24px", borderBottom: "1px solid " + t.border, display: "flex", alignItems: "baseline", gap: 10, flexShrink: 0, background: t.surface }}>
+      <div style={{ padding: "16px 24px", borderBottom: "1px solid " + t.border, display: "flex", alignItems: "center", gap: 10, flexShrink: 0, background: t.surface }}>
+        <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}
+          style={{ display: "none", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", color: t.text, fontSize: 20, cursor: "pointer", padding: "0 4px 0 0", lineHeight: 1 }}>
+          ☰
+        </button>
         <span style={{ fontSize: 16, fontWeight: 600, color: t.text, letterSpacing: "-0.01em" }}>Branches</span>
         <span style={{ fontSize: 11, fontWeight: 500, color: t.textTertiary }}>prototype</span>
       </div>
 
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
+        {/* Sidebar overlay for mobile */}
+        <div className={"sidebar-overlay" + (sidebarOpen ? " sidebar-open" : "")} onClick={() => setSidebarOpen(false)} />
         {/* Sidebar */}
-        <div style={{ width: 270, borderRight: "1px solid " + t.border, display: "flex", flexDirection: "column", flexShrink: 0, background: t.surface }}>
+        <div className={"sidebar-panel" + (sidebarOpen ? " sidebar-open" : "")} style={{ width: 270, borderRight: "1px solid " + t.border, display: "flex", flexDirection: "column", flexShrink: 0, background: t.surface }}>
           {/* Project switcher */}
           <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid " + t.borderSubtle }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <span style={{ fontSize: 11, fontWeight: 600, color: t.textTertiary, letterSpacing: "0.04em", textTransform: "uppercase" }}>Projects</span>
               <button onClick={() => setModal("project")} style={{ padding: "3px 10px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 11, fontWeight: 500, cursor: "pointer" }}>+ New</button>
             </div>
-            {projects.map((proj) => (
-              <div key={proj.id}
-                onClick={() => { setActiveProjectId(proj.id); setActiveId(proj.trunkId); }}
-                style={{
-                  padding: "7px 10px", borderRadius: t.radiusSm, cursor: "pointer", marginBottom: 2,
-                  background: activeProjectId === proj.id ? t.accentSoft : "transparent",
-                  display: "flex", alignItems: "center", gap: 8,
-                }}
-                onMouseEnter={(e) => { if (activeProjectId !== proj.id) e.currentTarget.style.background = t.surfaceMuted; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = activeProjectId === proj.id ? t.accentSoft : "transparent"; }}
-              >
-                <div style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: activeProjectId === proj.id ? t.accent : t.border }} />
-                <div style={{ fontSize: 12, fontWeight: activeProjectId === proj.id ? 600 : 500, color: activeProjectId === proj.id ? t.text : t.textSecondary, lineHeight: 1.35 }}>
-                  {proj.name}
+            {projects.map((proj) => {
+              const projMenuOpen = sidebarMenu === "proj-" + proj.id;
+              const projRenaming = renaming === proj.trunkId;
+              return (
+                <div key={proj.id} className="sb-item" style={{ position: "relative" }}>
+                  <div
+                    onClick={() => { if (!projRenaming) { setActiveProjectId(proj.id); setActiveId(proj.trunkId); setSidebarOpen(false); } }}
+                    style={{
+                      padding: "7px 10px", borderRadius: t.radiusSm, cursor: "pointer", marginBottom: 2,
+                      background: activeProjectId === proj.id ? t.accentSoft : "transparent",
+                      display: "flex", alignItems: "center", gap: 8,
+                    }}
+                    onMouseEnter={(e) => { if (activeProjectId !== proj.id) e.currentTarget.style.background = t.surfaceMuted; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = activeProjectId === proj.id ? t.accentSoft : "transparent"; }}
+                  >
+                    <div style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: activeProjectId === proj.id ? t.accent : t.border }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {projRenaming ? (
+                        <input value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setRenaming(null); setRenameValue(""); } }}
+                          onBlur={commitRename} autoFocus onClick={(e) => e.stopPropagation()}
+                          style={{ fontSize: 12, fontWeight: 600, color: t.text, background: t.surfaceMuted, border: "1px solid " + t.accentBorder, borderRadius: 4, padding: "2px 6px", outline: "none", width: "100%", fontFamily: t.font, boxSizing: "border-box" }} />
+                      ) : (
+                        <div style={{ fontSize: 12, fontWeight: activeProjectId === proj.id ? 600 : 500, color: activeProjectId === proj.id ? t.text : t.textSecondary, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {proj.name}
+                        </div>
+                      )}
+                    </div>
+                    {!projRenaming && (
+                      <button className={"sb-dots" + (projMenuOpen ? " sb-dots-active" : "")}
+                        onClick={(e) => { e.stopPropagation(); setSidebarMenu(projMenuOpen ? null : "proj-" + proj.id); }}
+                        style={{ background: "transparent", border: "none", color: t.textTertiary, cursor: "pointer", fontSize: 13, padding: "0 4px", flexShrink: 0 }}>
+                        ···
+                      </button>
+                    )}
+                  </div>
+                  {projMenuOpen && (
+                    <div style={{ position: "absolute", right: 8, top: "100%", zIndex: 50, background: t.surface, border: "1px solid " + t.border, borderRadius: t.radiusSm, boxShadow: t.shadowLg, overflow: "hidden", minWidth: 120 }}>
+                      <button onClick={(e) => { e.stopPropagation(); startRename(proj.trunkId); setSidebarMenu(null); }}
+                        style={{ display: "block", width: "100%", padding: "8px 14px", border: "none", background: "transparent", color: t.text, fontSize: 12, fontWeight: 500, cursor: "pointer", textAlign: "left" }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = t.surfaceMuted} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>Rename</button>
+                      <button onClick={(e) => { e.stopPropagation(); requestDelete(proj.trunkId); setSidebarMenu(null); }}
+                        style={{ display: "block", width: "100%", padding: "8px 14px", border: "none", background: "transparent", color: "#c0392b", fontSize: 12, fontWeight: 500, cursor: "pointer", textAlign: "left" }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = t.surfaceMuted} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>Delete</button>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {/* Branch tree */}
           {activeProject && (
             <>
               <div style={{ padding: "10px 16px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 11, fontWeight: 600, color: t.textTertiary, letterSpacing: "0.04em", textTransform: "uppercase" }}>Branches</span>
-                <button onClick={() => { setBranchParent(activeId); setModal("branch"); }} style={{ padding: "5px 12px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>+ Branch</button>
+                <button onClick={() => quickCreateBranch(activeProject.trunkId)} style={{ padding: "5px 12px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>+ Branch</button>
               </div>
               <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px" }}>{renderTree(null, 0)}</div>
             </>
@@ -807,17 +1008,17 @@ function BranchesPrototype() {
         {active && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: t.bg }}>
             {/* Header */}
-            <div style={{ padding: "18px 28px 14px", flexShrink: 0, background: t.surface, borderBottom: "1px solid " + t.border }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div>
-                  <div style={{ fontSize: 17, fontWeight: 600, color: t.text, lineHeight: 1.3 }}>{active.name}</div>
+            <div className="main-header" style={{ padding: "18px 28px 14px", flexShrink: 0, background: t.surface, borderBottom: "1px solid " + t.border }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div className="main-header-title" style={{ fontSize: 17, fontWeight: 600, color: t.text, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{active.name}</div>
                   <div style={{ fontSize: 13, color: t.textTertiary, marginTop: 3 }}>
                     {active.type === "trunk" ? "Project — shared with all branches" : "Branch of " + (parentNode?.name || "")}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0, marginTop: 2 }}>
+                <div className="main-header-actions" style={{ display: "flex", gap: 6, flexShrink: 0, marginTop: 2 }}>
                   <button onClick={() => setShowContext(!showContext)} style={{ padding: "6px 12px", borderRadius: t.radiusSm, border: "1px solid " + (showContext ? t.accentBorder : t.border), background: showContext ? t.accentSoft : "transparent", color: showContext ? t.accentText : t.textSecondary, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>Context</button>
-                  <button onClick={() => { setBranchParent(activeId); setModal("branch"); }} style={{ padding: "6px 12px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>+ Branch</button>
+                  <button onClick={() => quickCreateBranch(activeProject.trunkId)} style={{ padding: "6px 12px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>+ Branch</button>
                 </div>
               </div>
               {/* Mode toggle for branches */}
@@ -843,7 +1044,7 @@ function BranchesPrototype() {
 
             {/* Context panel */}
             {showContext && (
-              <div style={{ padding: "18px 28px", borderBottom: "1px solid " + t.border, background: t.surface, flexShrink: 0, maxHeight: 340, overflowY: "auto" }}>
+              <div className="context-panel" style={{ padding: "18px 28px", borderBottom: "1px solid " + t.border, background: t.surface, flexShrink: 0, maxHeight: 340, overflowY: "auto" }}>
                 {ancestors.length > 0 && (
                   <div style={{ marginBottom: 16 }}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: t.textTertiary, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 8 }}>Inherited</div>
@@ -871,18 +1072,32 @@ function BranchesPrototype() {
               </div>
             )}
 
-            {/* Compact summary bar */}
+            {/* Compact context bar — collapsible drawer */}
             {!showContext && (allInheritedConfirmed.length > 0 || (active.confirmedItems || []).length > 0) && (
-              <div style={{ padding: "7px 28px", borderBottom: "1px solid " + t.borderSubtle, background: t.surface, flexShrink: 0, display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
-                {allInheritedConfirmed.length > 0 && <span style={{ fontSize: 11, color: t.textTertiary, marginRight: 4 }}>{allInheritedConfirmed.length} inherited</span>}
-                {(active.confirmedItems || []).map((item, i) => (
-                  <span key={i} style={{ fontSize: 11, color: t.green, background: t.greenSoft, border: "1px solid " + t.greenBorder, padding: "2px 8px", borderRadius: 16 }}>{item.length > 40 ? item.substring(0, 40) + "..." : item}</span>
-                ))}
+              <div style={{ borderBottom: "1px solid " + t.borderSubtle, background: t.surface, flexShrink: 0 }}>
+                <button onClick={() => setContextBarOpen(!contextBarOpen)}
+                  style={{ width: "100%", padding: "6px 28px", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontFamily: t.font }}>
+                  <span style={{ fontSize: 10, color: t.textTertiary, transform: contextBarOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", display: "inline-block" }}>▶</span>
+                  <span style={{ fontSize: 11, color: t.textTertiary, fontWeight: 500 }}>
+                    {allInheritedConfirmed.length + (active.confirmedItems || []).length} confirmed item{(allInheritedConfirmed.length + (active.confirmedItems || []).length) !== 1 ? "s" : ""}
+                    {allInheritedConfirmed.length > 0 ? " (" + allInheritedConfirmed.length + " inherited)" : ""}
+                  </span>
+                </button>
+                {contextBarOpen && (
+                  <div style={{ padding: "0 28px 8px", display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {allInheritedConfirmed.map((item, i) => (
+                      <span key={"ih-" + i} style={{ fontSize: 11, color: t.amber, background: t.amberSoft, border: "1px solid " + t.amberBorder, padding: "2px 8px", borderRadius: 16 }}>{item.length > 40 ? item.substring(0, 40) + "..." : item}</span>
+                    ))}
+                    {(active.confirmedItems || []).map((item, i) => (
+                      <span key={i} style={{ fontSize: 11, color: t.green, background: t.greenSoft, border: "1px solid " + t.greenBorder, padding: "2px 8px", borderRadius: 16 }}>{item.length > 40 ? item.substring(0, 40) + "..." : item}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             {/* Messages */}
-            <div ref={msgRef} onMouseUp={handleMouseUpInMessages} style={{ flex: 1, overflowY: "auto", padding: "20px 28px", position: "relative" }}>
+            <div ref={msgRef} onMouseUp={handleMouseUpInMessages} className="msg-area" style={{ flex: 1, overflowY: "auto", padding: "20px 28px", position: "relative" }}>
               {active.messages.length === 0 && !loading && (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", paddingTop: 80, gap: 6 }}>
                   <div style={{ fontSize: 13, fontWeight: 500, color: t.textTertiary }}>
@@ -1003,9 +1218,9 @@ function BranchesPrototype() {
             )}
 
             {/* Input */}
-            <div style={{ padding: "14px 28px 18px", flexShrink: 0, background: t.surface, borderTop: "1px solid " + t.border }}>
+            <div className="input-area" style={{ padding: "14px 28px 18px", flexShrink: 0, background: t.surface, borderTop: "1px solid " + t.border }}>
               <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-                <textarea rows={2}
+                <textarea ref={chatInputRef} rows={2}
                   style={{ flex: 1, background: t.surfaceMuted, border: "1px solid " + t.border, borderRadius: t.radius, padding: "11px 14px", color: t.text, fontSize: 14, outline: "none", resize: "none", fontFamily: t.font, lineHeight: 1.5 }}
                   placeholder={active.type === "trunk" ? "Message Claude about your project..." : active.mode === "cowork" ? "Ask Claude to research or create documents for " + active.name + "..." : "Message Claude about " + active.name + "..."}
                   value={input} onChange={(e) => setInput(e.target.value)}
@@ -1044,29 +1259,37 @@ function BranchesPrototype() {
         </Modal>
       )}
 
-      {/* New Branch Modal */}
-      {modal === "branch" && (
-        <Modal onClose={() => setModal(null)}>
-          <div style={{ fontSize: 17, fontWeight: 600, color: t.text, marginBottom: 4 }}>New branch</div>
-          <div style={{ fontSize: 13, color: t.textTertiary, marginBottom: 20 }}>from {nodes.find((n) => n.id === branchParent)?.name}</div>
-          <label style={{ fontSize: 13, fontWeight: 500, color: t.textSecondary, marginBottom: 6, display: "block" }}>Name</label>
-          <input style={{ width: "100%", background: t.surfaceMuted, border: "1px solid " + t.border, borderRadius: t.radiusSm, padding: "10px 12px", color: t.text, fontSize: 14, outline: "none", marginBottom: 16, fontFamily: t.font, boxSizing: "border-box" }}
-            placeholder="e.g., Transportation, Activities, Dining..." value={branchName} onChange={(e) => setBranchName(e.target.value)} autoFocus
-            onFocus={(e) => e.target.style.borderColor = t.accentBorder} onBlur={(e) => e.target.style.borderColor = t.border}
-          />
-          <div style={{ fontSize: 11, fontWeight: 600, color: t.textTertiary, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 8 }}>Will inherit</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 16 }}>
-            {(nodes.find((n) => n.id === branchParent)?.contextEntries || []).map((e, i) => (
-              <span key={i} style={{ fontSize: 12, color: t.amber, background: t.amberSoft, border: "1px solid " + t.amberBorder, padding: "3px 10px", borderRadius: 20 }}>{e.label}</span>
-            ))}
-            {(nodes.find((n) => n.id === branchParent)?.confirmedItems || []).map((item, i) => (
-              <span key={"ci-" + i} style={{ fontSize: 12, color: t.amber, background: t.amberSoft, border: "1px solid " + t.amberBorder, padding: "3px 10px", borderRadius: 20 }}>{item.length > 35 ? item.substring(0, 35) + "..." : item}</span>
-            ))}
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <Modal onClose={() => setDeleteConfirm(null)}>
+          <div style={{ fontSize: 17, fontWeight: 600, color: t.text, marginBottom: 4 }}>
+            {deleteConfirm.type === "project" ? "Delete project?" : "Delete branch?"}
           </div>
-          <div style={{ fontSize: 13, color: t.textTertiary, marginBottom: 20, lineHeight: 1.5 }}>You can add context after creating the branch.</div>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button onClick={() => setModal(null)} style={{ padding: "9px 16px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>Cancel</button>
-            <button onClick={createBranch} style={{ padding: "9px 16px", borderRadius: t.radiusSm, border: "none", background: t.accent, color: t.white, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>Create</button>
+          <div style={{ fontSize: 13, color: t.textTertiary, marginBottom: 20, lineHeight: 1.5 }}>
+            {deleteConfirm.type === "project"
+              ? "This will permanently delete the project and all its branches."
+              : deleteConfirm.sharedItems.length > 0
+                ? "This branch has context that was pushed up to the parent. What would you like to do?"
+                : "This will permanently delete this branch and any sub-branches."}
+          </div>
+          {deleteConfirm.type === "branch" && deleteConfirm.sharedItems.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: t.textTertiary, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 8 }}>Shared context</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {deleteConfirm.sharedItems.map((item, i) => (
+                  <span key={i} style={{ fontSize: 12, color: t.amber, background: t.amberSoft, border: "1px solid " + t.amberBorder, padding: "3px 10px", borderRadius: 20 }}>{item.length > 40 ? item.substring(0, 40) + "..." : item}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => setDeleteConfirm(null)} style={{ padding: "9px 16px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>Cancel</button>
+            {deleteConfirm.type === "branch" && deleteConfirm.sharedItems.length > 0 && (
+              <button onClick={() => executeDelete(true)} style={{ padding: "9px 16px", borderRadius: t.radiusSm, border: "1px solid #c0392b", background: "transparent", color: "#c0392b", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>Delete + remove shared context</button>
+            )}
+            <button onClick={() => executeDelete(false)} style={{ padding: "9px 16px", borderRadius: t.radiusSm, border: "none", background: "#c0392b", color: t.white, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+              {deleteConfirm.type === "project" ? "Delete project" : deleteConfirm.sharedItems.length > 0 ? "Delete, keep shared context" : "Delete branch"}
+            </button>
           </div>
         </Modal>
       )}

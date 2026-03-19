@@ -1037,8 +1037,8 @@ function BranchesPrototype() {
                   <button onClick={() => quickCreateBranch(activeProject.trunkId)} style={{ padding: "6px 12px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>+ Branch</button>
                 </div>
               </div>
-              {/* Mode toggle for branches */}
-              {active.type === "branch" && (
+              {/* Mode toggle */}
+              {(active.type === "branch" || active.type === "trunk") && (
                 <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ display: "flex", borderRadius: 20, border: "1px solid " + t.border, overflow: "hidden", background: t.surfaceMuted }}>
                     {["chat", "cowork"].map((m) => (

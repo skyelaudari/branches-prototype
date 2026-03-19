@@ -475,7 +475,7 @@ function BranchesPrototype() {
   const [activeProjectId, setActiveProjectId] = useState("vacation");
   const [activeId, setActiveId] = useState(TRUNK_ID);
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loadingNodeId, setLoadingNodeId] = useState(null);
   const [modal, setModal] = useState(null);
   const [projectName, setProjectName] = useState("");
   const [showContext, setShowContext] = useState(false);
@@ -545,10 +545,11 @@ function BranchesPrototype() {
   const active = nodes.find((n) => n.id === activeId);
   const ancestors = getAncestorChain(activeId, nodes);
   const parentNode = active ? nodes.find((n) => n.id === active.parentId) : null;
+  const loading = loadingNodeId === activeId; // Show spinner only when viewing the loading branch
 
   useEffect(() => {
     if (msgRef.current) msgRef.current.scrollTop = msgRef.current.scrollHeight;
-  }, [active?.messages?.length, loading]);
+  }, [active?.messages?.length, loadingNodeId]);
 
   useEffect(() => { setShowContext(false); setPopover(null); }, [activeId]);
 
@@ -608,14 +609,15 @@ function BranchesPrototype() {
   const updateNode = (id, updates) => setNodes((prev) => prev.map((n) => n.id === id ? { ...n, ...updates } : n));
 
   const send = useCallback(async () => {
-    if (!input.trim() || loading) return;
+    if (!input.trim() || loadingNodeId) return;
     const txt = input.trim();
+    const targetId = activeId; // Capture target so response lands even if user switches branches
     setInput("");
-    const updated = nodes.map((n) => n.id === activeId ? { ...n, messages: [...n.messages, { role: "user", content: txt }] } : n);
+    const updated = nodes.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, { role: "user", content: txt }] } : n);
     setNodes(updated);
-    setLoading(true);
+    setLoadingNodeId(targetId);
     try {
-      const nd = updated.find((n) => n.id === activeId);
+      const nd = updated.find((n) => n.id === targetId);
       // Auto-name branch from first message via lightweight Haiku call
       if (nd.type === "branch" && nd.messages.length === 1 && nd.name === "New branch") {
         fetch("/api/name", {
@@ -624,12 +626,12 @@ function BranchesPrototype() {
           body: JSON.stringify({ message: txt }),
         }).then((r) => r.json()).then((data) => {
           const label = data.name || txt.substring(0, 40);
-          setNodes((prev) => prev.map((n) => n.id === activeId && n.name === "New branch" ? { ...n, name: label } : n));
+          setNodes((prev) => prev.map((n) => n.id === targetId && n.name === "New branch" ? { ...n, name: label } : n));
         }).catch(() => {
-          setNodes((prev) => prev.map((n) => n.id === activeId && n.name === "New branch" ? { ...n, name: txt.substring(0, 40) } : n));
+          setNodes((prev) => prev.map((n) => n.id === targetId && n.name === "New branch" ? { ...n, name: txt.substring(0, 40) } : n));
         });
       }
-      const anc = getAncestorChain(activeId, updated);
+      const anc = getAncestorChain(targetId, updated);
       const sys = buildSystemPrompt(nd, anc);
       // Build messages, injecting search context from prior tool calls so Claude remembers raw results
       const apiMessages = [];
@@ -656,8 +658,8 @@ function BranchesPrototype() {
       if (!res.ok || data.error) {
         const errMsg = data.error?.message || data.error || `API error (${res.status})`;
         console.error("API error:", data);
-        setNodes((prev) => prev.map((n) => n.id === activeId ? { ...n, messages: [...n.messages, { role: "assistant", content: "Error: " + errMsg }] } : n));
-        setLoading(false);
+        setNodes((prev) => prev.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, { role: "assistant", content: "Error: " + errMsg }] } : n));
+        setLoadingNodeId(null);
         return;
       }
       let reply = data.content?.filter((b) => b.type === "text").map((b) => b.text).join("\n") || "Could not generate a response.";
@@ -672,16 +674,16 @@ function BranchesPrototype() {
         reply = reply.replace(/\s*<<COWORK_Q>>[\s\S]*?<<SUGGEST_COWORK>>\s*/g, "").trim();
       }
       setNodes((prev) => prev.map((n) => {
-        if (n.id !== activeId) return n;
+        if (n.id !== targetId) return n;
         const updated = { ...n, messages: [...n.messages, { role: "assistant", content: reply, _toolCalls: toolCalls, _searchContext: searchContext, _files: files || undefined, _suggestCowork: coworkQuestion || undefined }] };
         if (containerId) updated.containerId = containerId;
         return updated;
       }));
     } catch (err) {
-      setNodes((prev) => prev.map((n) => n.id === activeId ? { ...n, messages: [...n.messages, { role: "assistant", content: "Connection error. The prototype's context architecture is working — branch inheritance and propagation are functional." }] } : n));
+      setNodes((prev) => prev.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, { role: "assistant", content: "Connection error. The prototype's context architecture is working — branch inheritance and propagation are functional." }] } : n));
     }
-    setLoading(false);
-  }, [input, loading, activeId, nodes]);
+    setLoadingNodeId(null);
+  }, [input, loadingNodeId, activeId, nodes]);
 
   // Handle "Switch to Cowork" button — keep existing conversation, switch mode, send a follow-up to search
   const handleSwitchToCowork = useCallback((msgIndex) => {
@@ -846,7 +848,9 @@ function BranchesPrototype() {
                 ) : (
                   <>
                     <div style={{ fontSize: 13, fontWeight: isActive ? 600 : 500, color: isActive ? t.text : t.textSecondary, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.name}</div>
-                    {(node.messages.length > 0 || (node.confirmedItems || []).length > 0) && (
+                    {loadingNodeId === node.id ? (
+                      <div style={{ fontSize: 11, color: t.accent, marginTop: 2 }}>thinking…</div>
+                    ) : (node.messages.length > 0 || (node.confirmedItems || []).length > 0) && (
                       <div style={{ fontSize: 11, color: t.textTertiary, marginTop: 2 }}>
                         {node.messages.length > 0 && (node.messages.length + " msg" + (node.messages.length !== 1 ? "s" : ""))}
                         {node.messages.length > 0 && (node.confirmedItems || []).length > 0 && " · "}

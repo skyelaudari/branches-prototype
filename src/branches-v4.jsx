@@ -493,11 +493,48 @@ function BranchesPrototype() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contextBarOpen, setContextBarOpen] = useState(false);
+  const [attachedImages, setAttachedImages] = useState([]); // [{ base64, mediaType, preview }]
+  const [dragOver, setDragOver] = useState(false);
   const msgRef = useRef(null);
   const chatInputRef = useRef(null);
+  const fileInputRef = useRef(null);
   const dbEnabled = useRef(false);
   const isInitialLoad = useRef(true);
   const saveTimer = useRef(null);
+
+  // Image upload helpers
+  const processImageFile = (file) => {
+    if (!file.type.startsWith("image/")) return;
+    if (file.size > 5 * 1024 * 1024) { setToast("Image must be under 5MB"); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(",")[1];
+      const mediaType = file.type;
+      setAttachedImages((prev) => [...prev, { base64, mediaType, preview: reader.result }]);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        processImageFile(item.getAsFile());
+        return;
+      }
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = e.dataTransfer?.files;
+    if (files) for (const f of files) processImageFile(f);
+  };
+
+  const removeImage = (idx) => setAttachedImages((prev) => prev.filter((_, i) => i !== idx));
 
   // Load state from DB on mount (or fall back to seed data)
   useEffect(() => {
@@ -611,26 +648,37 @@ function BranchesPrototype() {
   const updateNode = (id, updates) => setNodes((prev) => prev.map((n) => n.id === id ? { ...n, ...updates } : n));
 
   const send = useCallback(async () => {
-    if (!input.trim() || loadingNodeId) return;
+    if ((!input.trim() && attachedImages.length === 0) || loadingNodeId) return;
     const txt = input.trim();
+    const images = [...attachedImages];
     const targetId = activeId; // Capture target so response lands even if user switches branches
     setInput("");
-    const updated = nodes.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, { role: "user", content: txt }] } : n);
+    setAttachedImages([]);
+    // Build message content — string if text-only, array of content blocks if images attached
+    const msgContent = images.length > 0
+      ? [...images.map((img) => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.base64 } })), ...(txt ? [{ type: "text", text: txt }] : [])]
+      : txt;
+    // Store display-friendly version with preview URLs for rendering
+    const storedMsg = images.length > 0
+      ? { role: "user", content: msgContent, _images: images.map((img) => img.preview) }
+      : { role: "user", content: txt };
+    const updated = nodes.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, storedMsg] } : n);
     setNodes(updated);
     setLoadingNodeId(targetId);
     try {
       const nd = updated.find((n) => n.id === targetId);
       // Auto-name branch from first message via lightweight Haiku call
+      const nameText = txt || (images.length > 0 ? "Image shared" : "");
       if (nd.type === "branch" && nd.messages.length === 1 && nd.name === "New branch") {
         fetch("/api/name", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: txt }),
+          body: JSON.stringify({ message: nameText }),
         }).then((r) => r.json()).then((data) => {
-          const label = data.name || txt.substring(0, 40);
+          const label = data.name || nameText.substring(0, 40);
           setNodes((prev) => prev.map((n) => n.id === targetId && n.name === "New branch" ? { ...n, name: label } : n));
         }).catch(() => {
-          setNodes((prev) => prev.map((n) => n.id === targetId && n.name === "New branch" ? { ...n, name: txt.substring(0, 40) } : n));
+          setNodes((prev) => prev.map((n) => n.id === targetId && n.name === "New branch" ? { ...n, name: nameText.substring(0, 40) } : n));
         });
       }
       const anc = getAncestorChain(targetId, updated);
@@ -638,6 +686,7 @@ function BranchesPrototype() {
       // Build messages, injecting search context from prior tool calls so Claude remembers raw results
       const apiMessages = [];
       for (const m of nd.messages) {
+        // For API, strip _images preview data but keep content (which has base64 blocks)
         apiMessages.push({ role: m.role, content: m.content });
         if (m._searchContext) {
           apiMessages.push({ role: "user", content: "[Search results from previous tool use for reference]\n" + m._searchContext });
@@ -694,7 +743,7 @@ function BranchesPrototype() {
       setNodes((prev) => prev.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, { role: "assistant", content: "Connection error. The prototype's context architecture is working — branch inheritance and propagation are functional." }] } : n));
     }
     setLoadingNodeId(null);
-  }, [input, loadingNodeId, activeId, nodes]);
+  }, [input, loadingNodeId, activeId, nodes, attachedImages]);
 
   // Handle "Switch to Cowork" button — keep existing conversation, switch mode, send a follow-up to search
   const handleSwitchToCowork = useCallback((msgIndex) => {
@@ -730,7 +779,8 @@ function BranchesPrototype() {
   }, [activeId, nodes]);
 
   const copyMessage = useCallback((text, index) => {
-    navigator.clipboard.writeText(text).then(() => {
+    const copyText = typeof text === "string" ? text : (text?.filter((b) => b.type === "text").map((b) => b.text).join("\n") || "");
+    navigator.clipboard.writeText(copyText).then(() => {
       setCopiedMsg(index);
       setTimeout(() => setCopiedMsg(null), 1500);
     });
@@ -1181,7 +1231,22 @@ function BranchesPrototype() {
                     }}
                   >
                     {msg.role === "assistant" ? renderMarkdown(msg.content, (url) => setLinkConfirm(url)) : (
-                      <p style={{ fontSize: 14, lineHeight: 1.65, color: t.text, margin: 0 }}>{msg.content}</p>
+                      <>
+                        {msg._images && msg._images.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: typeof msg.content === "string" && msg.content ? 10 : 0 }}>
+                            {msg._images.map((src, j) => (
+                              <img key={j} src={src} alt="Attached" style={{ maxWidth: "100%", maxHeight: 300, borderRadius: 10, objectFit: "contain" }} />
+                            ))}
+                          </div>
+                        )}
+                        {typeof msg.content === "string" ? (
+                          <p style={{ fontSize: 14, lineHeight: 1.65, color: t.text, margin: 0 }}>{msg.content}</p>
+                        ) : (
+                          msg.content?.filter((b) => b.type === "text").map((b, j) => (
+                            <p key={j} style={{ fontSize: 14, lineHeight: 1.65, color: t.text, margin: 0 }}>{b.text}</p>
+                          ))
+                        )}
+                      </>
                     )}
                     {hoveredMsg === i && (
                       <button
@@ -1285,18 +1350,45 @@ function BranchesPrototype() {
             )}
 
             {/* Input */}
-            <div className="input-area" style={{ padding: "14px 28px 18px", flexShrink: 0, background: t.surface, borderTop: "1px solid " + t.border }}>
+            <div className="input-area"
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              style={{ padding: "14px 28px 18px", flexShrink: 0, background: t.surface, borderTop: "1px solid " + (dragOver ? t.accent : t.border), transition: "border-color 0.15s" }}
+            >
+              {/* Image previews */}
+              {attachedImages.length > 0 && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10, padding: "0 0 6px" }}>
+                  {attachedImages.map((img, i) => (
+                    <div key={i} style={{ position: "relative", display: "inline-block" }}>
+                      <img src={img.preview} alt="Preview" style={{ height: 64, borderRadius: 8, objectFit: "cover", border: "1px solid " + t.border }} />
+                      <button onClick={() => removeImage(i)} style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", background: t.text, color: t.surface, border: "none", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+                <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: "none" }}
+                  onChange={(e) => { for (const f of e.target.files) processImageFile(f); e.target.value = ""; }} />
+                <button onClick={() => fileInputRef.current?.click()} title="Attach image" style={{ padding: "9px 10px", borderRadius: t.radius, border: "1px solid " + t.border, background: t.surfaceMuted, color: t.textSecondary, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+                </button>
                 <textarea ref={chatInputRef} rows={2}
                   style={{ flex: 1, background: t.surfaceMuted, border: "1px solid " + t.border, borderRadius: t.radius, padding: "11px 14px", color: t.text, fontSize: 14, outline: "none", resize: "none", fontFamily: t.font, lineHeight: 1.5 }}
                   placeholder={active.type === "trunk" ? "Message Claude about your project..." : active.mode === "cowork" ? "Ask Claude to research or create documents for " + active.name + "..." : "Message Claude about " + active.name + "..."}
                   value={input} onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                  onPaste={handlePaste}
                   onFocus={(e) => e.target.style.borderColor = t.accentBorder}
                   onBlur={(e) => e.target.style.borderColor = t.border}
                 />
                 <button onClick={send} disabled={loading} data-send-btn style={{ padding: "11px 20px", borderRadius: t.radius, border: "none", background: t.accent, color: t.white, fontSize: 13, fontWeight: 600, cursor: loading ? "default" : "pointer", opacity: loading ? 0.6 : 1, whiteSpace: "nowrap" }}>Send</button>
               </div>
+              {dragOver && (
+                <div style={{ position: "absolute", inset: 0, background: t.accentSoft + "cc", borderRadius: t.radius, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 600, color: t.accent, pointerEvents: "none", zIndex: 10 }}>
+                  Drop image here
+                </div>
+              )}
             </div>
           </div>
         )}

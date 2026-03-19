@@ -334,14 +334,31 @@ function Modal({ children, onClose }) {
 
 function ContextEditor({ entries, onChange, label }) {
   const [adding, setAdding] = useState(false);
-  const [newLabel, setNewLabel] = useState("");
   const [newContent, setNewContent] = useState("");
+  const [labeling, setLabeling] = useState(null); // entry id currently being auto-labeled
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
   const addEntry = () => {
-    if (!newLabel.trim() || !newContent.trim()) return;
-    onChange([...entries, { id: "ce-" + Date.now(), label: newLabel.trim(), content: newContent.trim() }]);
-    setNewLabel(""); setNewContent(""); setAdding(false);
+    if (!newContent.trim()) return;
+    const content = newContent.trim();
+    const entryId = "ce-" + Date.now();
+    onChange([...entries, { id: entryId, label: "Labeling...", content }]);
+    setNewContent(""); setAdding(false);
+    setLabeling(entryId);
+    fetch("/api/name", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: content }),
+    }).then((r) => r.json()).then((data) => {
+      const autoLabel = data.name || content.substring(0, 30);
+      onChange(entriesRef.current.map((x) => x.id === entryId ? { ...x, label: autoLabel } : x));
+      setLabeling(null);
+    }).catch(() => {
+      onChange(entriesRef.current.map((x) => x.id === entryId ? { ...x, label: content.substring(0, 30) } : x));
+      setLabeling(null);
+    });
   };
-  const cancel = () => { setNewLabel(""); setNewContent(""); setAdding(false); };
+  const cancel = () => { setNewContent(""); setAdding(false); };
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -351,7 +368,7 @@ function ContextEditor({ entries, onChange, label }) {
       {entries.map((entry) => (
         <div key={entry.id} style={{ background: t.surfaceMuted, border: "1px solid " + t.borderSubtle, borderRadius: t.radiusSm, padding: "10px 12px", marginBottom: 6 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-            <input value={entry.label} onChange={(e) => onChange(entries.map((x) => x.id === entry.id ? { ...x, label: e.target.value } : x))} style={{ background: "transparent", border: "none", color: t.text, fontSize: 12, fontWeight: 600, outline: "none", flex: 1, padding: 0 }} />
+            <span style={{ color: labeling === entry.id ? t.textTertiary : t.text, fontSize: 12, fontWeight: 600, fontStyle: labeling === entry.id ? "italic" : "normal" }}>{entry.label}</span>
             <button onClick={() => onChange(entries.filter((x) => x.id !== entry.id))} style={{ background: "transparent", border: "none", color: t.textTertiary, cursor: "pointer", fontSize: 13, padding: "0 4px" }}>×</button>
           </div>
           <textarea value={entry.content} onChange={(e) => onChange(entries.map((x) => x.id === entry.id ? { ...x, content: e.target.value } : x))} style={{ width: "100%", background: "transparent", border: "none", color: t.textSecondary, fontSize: 13, outline: "none", resize: "vertical", fontFamily: t.font, lineHeight: 1.55, minHeight: 28, padding: 0, boxSizing: "border-box" }} />
@@ -359,8 +376,7 @@ function ContextEditor({ entries, onChange, label }) {
       ))}
       {adding && (
         <div style={{ background: t.surface, border: "1px solid " + t.accentBorder, borderRadius: t.radiusSm, padding: 12, marginBottom: 6 }}>
-          <input placeholder="Label" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} autoFocus style={{ width: "100%", background: "transparent", border: "none", borderBottom: "1px solid " + t.borderSubtle, color: t.text, fontSize: 12, fontWeight: 600, outline: "none", padding: "4px 0", marginBottom: 8, boxSizing: "border-box" }} />
-          <textarea placeholder="Context, instructions, notes, links..." value={newContent} onChange={(e) => setNewContent(e.target.value)} style={{ width: "100%", background: "transparent", border: "none", color: t.textSecondary, fontSize: 13, outline: "none", resize: "vertical", fontFamily: t.font, lineHeight: 1.55, minHeight: 48, padding: 0, boxSizing: "border-box" }} />
+          <textarea placeholder="Add context, instructions, notes, links..." value={newContent} onChange={(e) => setNewContent(e.target.value)} autoFocus style={{ width: "100%", background: "transparent", border: "none", color: t.textSecondary, fontSize: 13, outline: "none", resize: "vertical", fontFamily: t.font, lineHeight: 1.55, minHeight: 48, padding: 0, boxSizing: "border-box" }} />
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 8 }}>
             <button onClick={cancel} style={{ padding: "5px 12px", borderRadius: t.radiusSm, border: "1px solid " + t.border, background: "transparent", color: t.textSecondary, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>Cancel</button>
             <button onClick={addEntry} style={{ padding: "5px 12px", borderRadius: t.radiusSm, border: "none", background: t.accent, color: t.white, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>Add</button>

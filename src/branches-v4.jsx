@@ -751,6 +751,14 @@ function BranchesPrototype() {
       : { role: "user", content: txt };
     const updated = nodes.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, storedMsg] } : n);
     setNodes(updated);
+    // Immediately persist user message to DB
+    if (dbEnabled.current) {
+      fetch("/api/state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projects, nodes: updated }),
+      }).catch(console.error);
+    }
     setLoadingNodeId(targetId);
     try {
       const nd = updated.find((n) => n.id === targetId);
@@ -820,18 +828,27 @@ function BranchesPrototype() {
         if (item) suggestedContext.push(item);
       }
       reply = reply.replace(/\s*<<SUGGEST_CONTEXT>>[\s\S]*?<<SUGGEST_CONTEXT>>\s*/g, "").trim();
-      setNodes((prev) => prev.map((n) => {
-        if (n.id !== targetId) return n;
-        const updated = { ...n, messages: [...n.messages, { role: "assistant", content: reply, _toolCalls: toolCalls, _searchContext: searchContext, _files: files || undefined, _suggestCowork: coworkQuestion || undefined, _suggestedContext: suggestedContext.length > 0 ? suggestedContext : undefined }] };
-        if (containerId) updated.containerId = containerId;
-        return updated;
-      }));
+      setNodes((prev) => {
+        const newNodes = prev.map((n) => {
+          if (n.id !== targetId) return n;
+          const updated = { ...n, messages: [...n.messages, { role: "assistant", content: reply, _toolCalls: toolCalls, _searchContext: searchContext, _files: files || undefined, _suggestCowork: coworkQuestion || undefined, _suggestedContext: suggestedContext.length > 0 ? suggestedContext : undefined }] };
+          if (containerId) updated.containerId = containerId;
+          return updated;
+        });
+        // Immediately persist to DB inside the setter so we have the exact new state
+        if (dbEnabled.current) {
+          fetch("/api/state", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projects: latestState.current.projects, nodes: newNodes }),
+          }).catch(console.error);
+        }
+        return newNodes;
+      });
     } catch (err) {
       setNodes((prev) => prev.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, { role: "assistant", content: "Connection error. The prototype's context architecture is working — branch inheritance and propagation are functional." }] } : n));
     }
     setLoadingNodeId(null);
-    // Flush save immediately so response persists across devices
-    setTimeout(flushSaveNow, 100);
   }, [input, loadingNodeId, activeId, nodes, attachedImages, flushSaveNow]);
 
   // Handle "Switch to Cowork" button — keep existing conversation, switch mode, send a follow-up to search

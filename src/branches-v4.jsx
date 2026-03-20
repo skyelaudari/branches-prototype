@@ -833,7 +833,7 @@ function BranchesPrototype() {
           apiMessages.push({ role: "assistant", content: "Noted, I have the search results with URLs available for reference." });
         }
       }
-      const requestBody = { model: "claude-sonnet-4-5-20250929", max_tokens: nd.mode === "cowork" ? 8192 : 1000, system: sys, messages: apiMessages };
+      const requestBody = { model: "claude-sonnet-4-5-20250929", max_tokens: nd.mode === "cowork" ? 8192 : 4096, system: sys, messages: apiMessages };
       if (nd.mode === "cowork") {
         requestBody.tools = [...COWORK_TOOLS, CODE_EXECUTION_TOOL];
         requestBody.tool_choice = { type: "auto" };

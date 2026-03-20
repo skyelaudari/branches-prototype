@@ -423,7 +423,7 @@ function PasscodeGate({ children }) {
 
   if (authState === "checking") {
     return (
-      <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100dvh", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ fontSize: 13, color: t.textTertiary }}>Loading...</div>
       </div>
     );
@@ -431,7 +431,7 @@ function PasscodeGate({ children }) {
 
   if (authState === "gate") {
     return (
-      <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100dvh", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ width: 340, textAlign: "center" }}>
           <div style={{ fontSize: 18, fontWeight: 600, color: t.text, marginBottom: 4 }}>Branches</div>
           <div style={{ fontSize: 13, color: t.textTertiary, marginBottom: 24 }}>Enter passcode to continue</div>
@@ -969,7 +969,7 @@ function BranchesPrototype() {
   // Loading screen while fetching state
   if (appLoading) {
     return (
-      <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100dvh", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Branches</div>
           <div style={{ fontSize: 13, color: t.textTertiary }}>Loading...</div>
@@ -979,7 +979,7 @@ function BranchesPrototype() {
   }
 
   return (
-    <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ background: t.bg, color: t.text, fontFamily: t.font, height: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style>{`
         .sb-item .sb-dots{opacity:0;transition:opacity .1s}.sb-item:hover .sb-dots,.sb-dots.sb-dots-active{opacity:.6}.sb-dots:hover{opacity:1!important}
         @media(max-width:768px){

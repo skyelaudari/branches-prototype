@@ -501,6 +501,7 @@ function BranchesPrototype() {
   const dbEnabled = useRef(false);
   const isInitialLoad = useRef(true);
   const saveTimer = useRef(null);
+  const latestState = useRef({ projects: [], nodes: [] });
 
   // Image upload helpers
   const processImageFile = (file) => {
@@ -566,6 +567,9 @@ function BranchesPrototype() {
       });
   }, []);
 
+  // Keep latest state in ref so visibilitychange handler can access it
+  useEffect(() => { latestState.current = { projects, nodes }; }, [projects, nodes]);
+
   // Auto-save to DB on state changes (debounced 1s)
   useEffect(() => {
     if (isInitialLoad.current || !dbEnabled.current) return;
@@ -579,6 +583,20 @@ function BranchesPrototype() {
     }, 1000);
     return () => clearTimeout(saveTimer.current);
   }, [projects, nodes]);
+
+  // Flush save immediately when page is hidden (tab switch, app switch, screen lock)
+  useEffect(() => {
+    const flushSave = () => {
+      if (document.visibilityState === "hidden" && dbEnabled.current && !isInitialLoad.current) {
+        clearTimeout(saveTimer.current);
+        // Use sendBeacon for reliability — it survives page suspension
+        const blob = new Blob([JSON.stringify(latestState.current)], { type: "application/json" });
+        navigator.sendBeacon("/api/state", blob);
+      }
+    };
+    document.addEventListener("visibilitychange", flushSave);
+    return () => document.removeEventListener("visibilitychange", flushSave);
+  }, []);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const active = nodes.find((n) => n.id === activeId);

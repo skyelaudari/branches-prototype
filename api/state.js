@@ -4,7 +4,7 @@
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, PUT, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") {
@@ -38,7 +38,7 @@ export default async function handler(req, res) {
     return res.status(200).json(rows[0]);
   }
 
-  if (req.method === "PUT") {
+  if (req.method === "PUT" || req.method === "POST") {
     const { projects, nodes } = req.body;
     await sql`
       INSERT INTO app_state (id, projects, nodes, updated_at)

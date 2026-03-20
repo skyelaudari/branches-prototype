@@ -62,6 +62,7 @@ app.post("/api/auth", (req, res) => authHandler(req, res));
 // State persistence — load/save app state from database (if configured)
 app.get("/api/state", (req, res) => stateHandler(req, res));
 app.put("/api/state", (req, res) => stateHandler(req, res));
+app.post("/api/state", (req, res) => stateHandler(req, res)); // sendBeacon uses POST
 
 // File download proxy — fetches files from Anthropic's Files API and streams to browser
 app.get("/api/files/:fileId", async (req, res) => {

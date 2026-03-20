@@ -632,13 +632,22 @@ function BranchesPrototype() {
   const showToast = (text) => { setToast(text); setTimeout(() => setToast(null), 3000); };
 
   const propagateItem = useCallback((text) => {
-    if (!active || !active.parentId) return;
+    if (!active) return;
     const summary = text.length > 300 ? text.substring(0, 300) + "..." : text;
-    setNodes((prev) => prev.map((n) => {
-      if (n.id === activeId) return { ...n, confirmedItems: [...(n.confirmedItems || []), summary] };
-      if (n.id === active.parentId) return { ...n, confirmedItems: [...(n.confirmedItems || []), summary] };
-      return n;
-    }));
+    if (active.type === "trunk") {
+      // At project level — save directly to trunk's confirmed items
+      setNodes((prev) => prev.map((n) => {
+        if (n.id === activeId) return { ...n, confirmedItems: [...(n.confirmedItems || []), summary] };
+        return n;
+      }));
+    } else {
+      // At branch level — save to both branch and parent
+      setNodes((prev) => prev.map((n) => {
+        if (n.id === activeId) return { ...n, confirmedItems: [...(n.confirmedItems || []), summary] };
+        if (n.id === active.parentId) return { ...n, confirmedItems: [...(n.confirmedItems || []), summary] };
+        return n;
+      }));
+    }
     showToast(summary.length > 70 ? summary.substring(0, 70) + "..." : summary);
   }, [active, activeId]);
 
@@ -1339,7 +1348,7 @@ function BranchesPrototype() {
                               style={{ padding: "5px 12px", borderRadius: 16, border: "none", background: t.green, color: t.white, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", transition: "opacity 0.15s" }}
                               onMouseEnter={(e) => e.currentTarget.style.opacity = "0.85"}
                               onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
-                            >Save to project ↑</button>
+                            >{active?.type === "trunk" ? "Save as context ✓" : "Save to project ↑"}</button>
                             <button onClick={() => {
                               setNodes((prev) => prev.map((n) => {
                                 if (n.id !== activeId) return n;

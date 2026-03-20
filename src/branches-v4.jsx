@@ -159,9 +159,24 @@ function renderMarkdown(text, onLinkClick) {
   const elements = [];
   let i = 0;
   let listItems = [];
+  let blockquoteLines = [];
+
+  const flushBlockquote = () => {
+    if (blockquoteLines.length > 0) {
+      elements.push(
+        <blockquote key={"bq-" + elements.length} style={{ margin: "8px 0", paddingLeft: 16, borderLeft: "3px solid #E8E5DE", color: "#6B6560", fontStyle: "normal" }}>
+          {blockquoteLines.map((bl, bi) => (
+            <p key={bi} style={{ fontSize: 14, lineHeight: 1.65, margin: "0 0 4px 0" }}>{renderInline(bl)}</p>
+          ))}
+        </blockquote>
+      );
+      blockquoteLines = [];
+    }
+  };
 
   const flushList = () => {
     if (listItems.length > 0) {
+      flushBlockquote();
       elements.push(<ul key={"ul-" + elements.length} style={{ margin: "8px 0", paddingLeft: 20 }}>{listItems}</ul>);
       listItems = [];
     }
@@ -223,13 +238,24 @@ function renderMarkdown(text, onLinkClick) {
           {renderInline(content)}
         </li>
       );
+    } else if (line.match(/^>\s?/)) {
+      flushList();
+      const content = line.replace(/^>\s?/, "");
+      if (content.trim() === "") {
+        // Empty blockquote line — keep as spacing within the quote
+        blockquoteLines.push("");
+      } else {
+        blockquoteLines.push(content);
+      }
     } else if (line.trim() === "") {
       flushList();
+      flushBlockquote();
       if (elements.length > 0) {
         elements.push(<div key={"br-" + i} style={{ height: 8 }} />);
       }
     } else {
       flushList();
+      flushBlockquote();
       elements.push(
         <p key={"p-" + i} style={{ fontSize: 14, lineHeight: 1.65, color: "#1A1915", margin: "0 0 4px 0" }}>
           {renderInline(line)}
@@ -239,6 +265,7 @@ function renderMarkdown(text, onLinkClick) {
     i++;
   }
   flushList();
+  flushBlockquote();
   return elements;
 }
 

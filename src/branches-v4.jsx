@@ -1279,7 +1279,17 @@ function BranchesPrototype() {
                     <div style={{ fontSize: 11, fontWeight: 600, color: t.textTertiary, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 8 }}>Confirmed</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
                       {active.confirmedItems.map((item, i) => (
-                        <span key={i} style={{ fontSize: 12, color: t.green, background: t.greenSoft, border: "1px solid " + t.greenBorder, padding: "3px 10px", borderRadius: 20 }}>{item.length > 60 ? item.substring(0, 60) + "..." : item}</span>
+                        <span key={i} style={{ fontSize: 12, color: t.green, background: t.greenSoft, border: "1px solid " + t.greenBorder, padding: "3px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          {item.length > 60 ? item.substring(0, 60) + "..." : item}
+                          <button onClick={() => {
+                            const updated = [...active.confirmedItems];
+                            updated.splice(i, 1);
+                            updateNode(activeId, { confirmedItems: updated });
+                          }} style={{ background: "transparent", border: "none", color: t.green, cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1, opacity: 0.6 }}
+                            onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
+                            onMouseLeave={(e) => e.currentTarget.style.opacity = "0.6"}
+                          >×</button>
+                        </span>
                       ))}
                     </div>
                   </div>
@@ -1304,7 +1314,14 @@ function BranchesPrototype() {
                       <span key={"ih-" + i} style={{ fontSize: 11, color: t.amber, background: t.amberSoft, border: "1px solid " + t.amberBorder, padding: "2px 8px", borderRadius: 16 }}>{item.length > 40 ? item.substring(0, 40) + "..." : item}</span>
                     ))}
                     {(active.confirmedItems || []).map((item, i) => (
-                      <span key={i} style={{ fontSize: 11, color: t.green, background: t.greenSoft, border: "1px solid " + t.greenBorder, padding: "2px 8px", borderRadius: 16 }}>{item.length > 40 ? item.substring(0, 40) + "..." : item}</span>
+                      <span key={i} style={{ fontSize: 11, color: t.green, background: t.greenSoft, border: "1px solid " + t.greenBorder, padding: "2px 8px", borderRadius: 16, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        {item.length > 40 ? item.substring(0, 40) + "..." : item}
+                        <button onClick={(e) => { e.stopPropagation(); const updated = [...active.confirmedItems]; updated.splice(i, 1); updateNode(activeId, { confirmedItems: updated }); }}
+                          style={{ background: "transparent", border: "none", color: t.green, cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1, opacity: 0.5 }}
+                          onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
+                          onMouseLeave={(e) => e.currentTarget.style.opacity = "0.5"}
+                        >×</button>
+                      </span>
                     ))}
                   </div>
                 )}

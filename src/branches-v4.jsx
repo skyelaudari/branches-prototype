@@ -504,14 +504,29 @@ function BranchesPrototype() {
   const latestState = useRef({ projects: [], nodes: [] });
 
   // Image upload helpers
+  const generateThumbnail = (dataUrl) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 200;
+      const scale = Math.min(maxW / img.width, 1);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.6));
+    };
+    img.src = dataUrl;
+  });
+
   const processImageFile = (file) => {
     if (!file.type.startsWith("image/")) return;
     if (file.size > 5 * 1024 * 1024) { setToast("Image must be under 5MB"); return; }
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const base64 = reader.result.split(",")[1];
       const mediaType = file.type;
-      setAttachedImages((prev) => [...prev, { base64, mediaType, preview: reader.result }]);
+      const thumbnail = await generateThumbnail(reader.result);
+      setAttachedImages((prev) => [...prev, { base64, mediaType, preview: reader.result, thumbnail }]);
     };
     reader.readAsDataURL(file);
   };
@@ -570,20 +585,26 @@ function BranchesPrototype() {
   // Keep latest state in ref so visibilitychange handler can access it
   useEffect(() => { latestState.current = { projects, nodes }; }, [projects, nodes]);
 
-  // Strip base64 image data from nodes before persisting to DB
-  // Keeps a placeholder so we know an image was there, but removes the heavy payload
+  // Strip full-size image data from nodes before persisting to DB
+  // Keeps thumbnails (~10-20KB each) for display, removes heavy base64 payloads (~2-5MB each)
   const stripImagesForSave = (nodeList) => nodeList.map((n) => ({
     ...n,
     messages: (n.messages || []).map((m) => {
       if (!m.content || typeof m.content === "string") return m;
-      // Array content = has image blocks — strip base64 data
+      // Array content = has image blocks — strip base64 data, keep text blocks
       const strippedContent = m.content.map((block) => {
         if (block.type === "image") return { type: "image", source: { type: "stripped", media_type: block.source?.media_type || "image/jpeg" } };
         return block;
       });
-      // Also strip preview URLs from _images
       const stripped = { ...m, content: strippedContent };
-      if (m._images) stripped._images = m._images.map(() => "[image]");
+      // Replace full-size previews with thumbnails for DB storage
+      if (m._thumbnails) {
+        stripped._images = m._thumbnails;
+      } else if (m._images) {
+        // Legacy: no thumbnails available, drop full previews
+        stripped._images = m._images.map(() => "[image]");
+      }
+      delete stripped._thumbnails; // Don't double-store
       return stripped;
     }),
   }));
@@ -764,9 +785,9 @@ function BranchesPrototype() {
     const msgContent = images.length > 0
       ? [...images.map((img) => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.base64 } })), ...(txt ? [{ type: "text", text: txt }] : [])]
       : txt;
-    // Store display-friendly version with preview URLs for rendering
+    // Store display-friendly version with preview URLs and thumbnails for persistence
     const storedMsg = images.length > 0
-      ? { role: "user", content: msgContent, _images: images.map((img) => img.preview) }
+      ? { role: "user", content: msgContent, _images: images.map((img) => img.preview), _thumbnails: images.map((img) => img.thumbnail) }
       : { role: "user", content: txt };
     const updated = nodes.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, storedMsg] } : n);
     setNodes(updated);
@@ -1348,7 +1369,9 @@ function BranchesPrototype() {
                         {msg._images && msg._images.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: typeof msg.content === "string" && msg.content ? 10 : 0 }}>
                             {msg._images.map((src, j) => (
-                              <img key={j} src={src} alt="Attached" style={{ maxWidth: "100%", maxHeight: 300, borderRadius: 10, objectFit: "contain" }} />
+                              src === "[image]"
+                                ? <div key={j} style={{ width: 80, height: 80, borderRadius: 10, background: "#f0ede8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#8a8578" }}>📷 image</div>
+                                : <img key={j} src={src} alt="Attached" style={{ maxWidth: "100%", maxHeight: 300, borderRadius: 10, objectFit: "contain" }} />
                             ))}
                           </div>
                         )}

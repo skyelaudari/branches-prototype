@@ -604,8 +604,27 @@ function BranchesPrototype() {
   const parentNode = active ? nodes.find((n) => n.id === active.parentId) : null;
   const loading = loadingNodeId === activeId; // Show spinner only when viewing the loading branch
 
+  const prevMsgCount = useRef(0);
   useEffect(() => {
-    if (msgRef.current) msgRef.current.scrollTop = msgRef.current.scrollHeight;
+    if (!msgRef.current || !active) return;
+    const msgs = active.messages || [];
+    const lastMsg = msgs[msgs.length - 1];
+    if (lastMsg?.role === "user") {
+      // User just sent — scroll to bottom so they see their message
+      msgRef.current.scrollTop = msgRef.current.scrollHeight;
+    } else if (lastMsg?.role === "assistant" && msgs.length > prevMsgCount.current) {
+      // New assistant response — scroll to the top of that message
+      requestAnimationFrame(() => {
+        const allMsgEls = msgRef.current?.querySelectorAll("[data-msg]");
+        const lastEl = allMsgEls?.[allMsgEls.length - 1];
+        if (lastEl) {
+          const containerTop = msgRef.current.getBoundingClientRect().top;
+          const elTop = lastEl.getBoundingClientRect().top;
+          msgRef.current.scrollTop += (elTop - containerTop) - 20; // 20px padding
+        }
+      });
+    }
+    prevMsgCount.current = msgs.length;
   }, [active?.messages?.length, loadingNodeId]);
 
   useEffect(() => { setShowContext(false); setPopover(null); }, [activeId]);
@@ -1222,7 +1241,7 @@ function BranchesPrototype() {
                 </div>
               )}
               {active.messages.map((msg, i) => (
-                <div key={i} style={{ marginBottom: 22, maxWidth: msg.role === "user" ? "75%" : "100%", marginLeft: msg.role === "user" ? "auto" : 0 }}>
+                <div key={i} data-msg={i} style={{ marginBottom: 22, maxWidth: msg.role === "user" ? "75%" : "100%", marginLeft: msg.role === "user" ? "auto" : 0 }}>
                   <div style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "space-between", alignItems: "center", marginBottom: 5 }}>
                     <span style={{ fontSize: 11, fontWeight: 500, color: t.textTertiary }}>{msg.role === "user" ? "You" : "Claude"}</span>
                     {msg.role === "assistant" && active.type === "branch" && (

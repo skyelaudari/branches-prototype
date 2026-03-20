@@ -570,39 +570,58 @@ function BranchesPrototype() {
   // Keep latest state in ref so visibilitychange handler can access it
   useEffect(() => { latestState.current = { projects, nodes }; }, [projects, nodes]);
 
+  // Strip base64 image data from nodes before persisting to DB
+  // Keeps a placeholder so we know an image was there, but removes the heavy payload
+  const stripImagesForSave = (nodeList) => nodeList.map((n) => ({
+    ...n,
+    messages: (n.messages || []).map((m) => {
+      if (!m.content || typeof m.content === "string") return m;
+      // Array content = has image blocks — strip base64 data
+      const strippedContent = m.content.map((block) => {
+        if (block.type === "image") return { type: "image", source: { type: "stripped", media_type: block.source?.media_type || "image/jpeg" } };
+        return block;
+      });
+      // Also strip preview URLs from _images
+      const stripped = { ...m, content: strippedContent };
+      if (m._images) stripped._images = m._images.map(() => "[image]");
+      return stripped;
+    }),
+  }));
+
+  const saveToDb = useCallback((projectsData, nodesData) => {
+    if (!dbEnabled.current) return;
+    const payload = { projects: projectsData, nodes: stripImagesForSave(nodesData) };
+    fetch("/api/state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(console.error);
+  }, []);
+
   // Immediate save helper (for after API responses)
   const flushSaveNow = useCallback(() => {
     if (!dbEnabled.current) return;
     clearTimeout(saveTimer.current);
-    fetch("/api/state", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(latestState.current),
-    }).catch(console.error);
-  }, []);
+    saveToDb(latestState.current.projects, latestState.current.nodes);
+  }, [saveToDb]);
 
   // Auto-save to DB on state changes (debounced 1s)
   useEffect(() => {
     if (isInitialLoad.current || !dbEnabled.current) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      fetch("/api/state", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projects, nodes }),
-      }).catch(console.error);
-    }, 1000);
+    saveTimer.current = setTimeout(() => saveToDb(projects, nodes), 1000);
     return () => clearTimeout(saveTimer.current);
-  }, [projects, nodes]);
+  }, [projects, nodes, saveToDb]);
 
   // Flush save on hide, reload state on return
   useEffect(() => {
     const handleVisibility = () => {
       if (!dbEnabled.current || isInitialLoad.current) return;
       if (document.visibilityState === "hidden") {
-        // Page being hidden — flush save immediately via sendBeacon
+        // Page being hidden — flush save immediately via sendBeacon (images stripped)
         clearTimeout(saveTimer.current);
-        const blob = new Blob([JSON.stringify(latestState.current)], { type: "application/json" });
+        const stripped = stripImagesForSave(latestState.current.nodes);
+        const blob = new Blob([JSON.stringify({ projects: latestState.current.projects, nodes: stripped })], { type: "application/json" });
         navigator.sendBeacon("/api/state", blob);
       } else if (document.visibilityState === "visible") {
         // Page becoming visible — reload state from DB to pick up changes from other devices
@@ -751,14 +770,8 @@ function BranchesPrototype() {
       : { role: "user", content: txt };
     const updated = nodes.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, storedMsg] } : n);
     setNodes(updated);
-    // Immediately persist user message to DB
-    if (dbEnabled.current) {
-      fetch("/api/state", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projects, nodes: updated }),
-      }).catch(console.error);
-    }
+    // Immediately persist user message to DB (images stripped)
+    saveToDb(projects, updated);
     setLoadingNodeId(targetId);
     try {
       const nd = updated.find((n) => n.id === targetId);
@@ -835,14 +848,8 @@ function BranchesPrototype() {
           if (containerId) updated.containerId = containerId;
           return updated;
         });
-        // Immediately persist to DB inside the setter so we have the exact new state
-        if (dbEnabled.current) {
-          fetch("/api/state", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projects: latestState.current.projects, nodes: newNodes }),
-          }).catch(console.error);
-        }
+        // Immediately persist to DB (images stripped)
+        saveToDb(latestState.current.projects, newNodes);
         return newNodes;
       });
     } catch (err) {

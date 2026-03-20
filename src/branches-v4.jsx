@@ -570,6 +570,17 @@ function BranchesPrototype() {
   // Keep latest state in ref so visibilitychange handler can access it
   useEffect(() => { latestState.current = { projects, nodes }; }, [projects, nodes]);
 
+  // Immediate save helper (for after API responses)
+  const flushSaveNow = useCallback(() => {
+    if (!dbEnabled.current) return;
+    clearTimeout(saveTimer.current);
+    fetch("/api/state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(latestState.current),
+    }).catch(console.error);
+  }, []);
+
   // Auto-save to DB on state changes (debounced 1s)
   useEffect(() => {
     if (isInitialLoad.current || !dbEnabled.current) return;
@@ -584,19 +595,37 @@ function BranchesPrototype() {
     return () => clearTimeout(saveTimer.current);
   }, [projects, nodes]);
 
-  // Flush save immediately when page is hidden (tab switch, app switch, screen lock)
+  // Flush save on hide, reload state on return
   useEffect(() => {
-    const flushSave = () => {
-      if (document.visibilityState === "hidden" && dbEnabled.current && !isInitialLoad.current) {
+    const handleVisibility = () => {
+      if (!dbEnabled.current || isInitialLoad.current) return;
+      if (document.visibilityState === "hidden") {
+        // Page being hidden — flush save immediately via sendBeacon
         clearTimeout(saveTimer.current);
-        // Use sendBeacon for reliability — it survives page suspension
         const blob = new Blob([JSON.stringify(latestState.current)], { type: "application/json" });
         navigator.sendBeacon("/api/state", blob);
+      } else if (document.visibilityState === "visible") {
+        // Page becoming visible — reload state from DB to pick up changes from other devices
+        fetch("/api/state")
+          .then((r) => r.json())
+          .then((data) => {
+            if (!data.useSeeds && data.projects && data.projects.length > 0) {
+              setProjects(data.projects);
+              setNodes(data.nodes || []);
+              // Keep current active selection if it still exists, otherwise reset
+              const stillExists = (data.nodes || []).some((n) => n.id === activeId);
+              if (!stillExists && data.projects.length > 0) {
+                setActiveProjectId(data.projects[0].id);
+                setActiveId(data.projects[0].trunkId);
+              }
+            }
+          })
+          .catch(console.error);
       }
     };
-    document.addEventListener("visibilitychange", flushSave);
-    return () => document.removeEventListener("visibilitychange", flushSave);
-  }, []);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [activeId]);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const active = nodes.find((n) => n.id === activeId);
@@ -801,7 +830,9 @@ function BranchesPrototype() {
       setNodes((prev) => prev.map((n) => n.id === targetId ? { ...n, messages: [...n.messages, { role: "assistant", content: "Connection error. The prototype's context architecture is working — branch inheritance and propagation are functional." }] } : n));
     }
     setLoadingNodeId(null);
-  }, [input, loadingNodeId, activeId, nodes, attachedImages]);
+    // Flush save immediately so response persists across devices
+    setTimeout(flushSaveNow, 100);
+  }, [input, loadingNodeId, activeId, nodes, attachedImages, flushSaveNow]);
 
   // Handle "Switch to Cowork" button — keep existing conversation, switch mode, send a follow-up to search
   const handleSwitchToCowork = useCallback((msgIndex) => {

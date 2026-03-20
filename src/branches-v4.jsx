@@ -144,7 +144,7 @@ function buildSystemPrompt(node, ancestors) {
   // Context suggestion instructions — applies to all modes
   p += '\n\nIMPORTANT: When your response contains key decisions, confirmed facts, important findings, or actionable conclusions that would benefit other conversations in this project, wrap each one in <<SUGGEST_CONTEXT>> tags. These should be concise, standalone statements (not full paragraphs). Examples:\n- <<SUGGEST_CONTEXT>>Rome dates confirmed: June 14-18, Trastevere apartment booked via VRBO<<SUGGEST_CONTEXT>>\n- <<SUGGEST_CONTEXT>>Budget split: 40% accommodation, 25% transport, 20% food, 15% activities<<SUGGEST_CONTEXT>>\nOnly suggest items that represent decisions, confirmed plans, key constraints, or important findings — not routine discussion points. Aim for 0-3 suggestions per response. Do NOT suggest context that is already listed in the project context or confirmed items above.';
   if (node.mode === "cowork") {
-    p += "\n\nYou have access to web search and document creation. When the user asks about current prices, availability, reviews, specific venues, or anything that benefits from live data, use the web_search tool to find relevant information. Synthesize the results into a clear, actionable response. Cite sources where appropriate.";
+    p += "\n\nYou have access to web search and document creation. When the user asks about current prices, availability, reviews, specific venues, or anything that benefits from live data, use the web_search tool (via the tool_use API mechanism) to find relevant information. Do NOT write XML tags or describe tool calls in your text — use the actual tool_use API. Synthesize the results into a clear, actionable response. Cite sources where appropriate.";
     p += "\n\nYou can also create professional documents: PowerPoint presentations (.pptx), Excel spreadsheets (.xlsx), Word documents (.docx), and PDFs. When the user requests a document, create it using your code execution environment.";
   } else if (node.type === "branch") {
     p += '\n\nYou are in Chat mode without web search. If the user asks for something that would benefit from live web data (current prices, availability, reviews, bookings, specific venue info), provide a helpful answer from your knowledge, then end your response by wrapping a single short question (asking if they\'d like you to search for more specific/current info) inside these markers: <<COWORK_Q>>your question here<<SUGGEST_COWORK>>. Do NOT mention "Cowork mode", "toggle", or "web search" in your text — the interface will handle that. The question should be specific to their request (e.g. "Want me to find current availability and pricing for family-friendly villas in Ravello for your June dates?").';
@@ -155,6 +155,8 @@ function buildSystemPrompt(node, ancestors) {
 // --- Lightweight Markdown Renderer ---
 function renderMarkdown(text, onLinkClick) {
   if (!text) return null;
+  // Strip any leaked XML tool-call tags from the response
+  text = text.replace(/<\/?(?:cowork_search|cowork_query|search|tool_call|function_call)[^>]*>/g, "").trim();
   const lines = text.split("\n");
   const elements = [];
   let i = 0;

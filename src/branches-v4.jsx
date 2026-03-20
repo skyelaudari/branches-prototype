@@ -815,8 +815,19 @@ function BranchesPrototype() {
       // Build messages, injecting search context from prior tool calls so Claude remembers raw results
       const apiMessages = [];
       for (const m of nd.messages) {
-        // For API, strip _images preview data but keep content (which has base64 blocks)
-        apiMessages.push({ role: m.role, content: m.content });
+        // For API: filter out stripped images (from DB persistence), keep only valid base64 images and text
+        let content = m.content;
+        if (Array.isArray(content)) {
+          content = content.filter((block) => {
+            if (block.type === "image" && block.source?.type === "stripped") return false;
+            return true;
+          });
+          // If only stripped images remain with no text, replace with a placeholder
+          if (content.length === 0) content = "[image was attached]";
+          // If only one text block remains, unwrap to string
+          else if (content.length === 1 && content[0].type === "text") content = content[0].text;
+        }
+        apiMessages.push({ role: m.role, content });
         if (m._searchContext) {
           apiMessages.push({ role: "user", content: "[Search results from previous tool use for reference]\n" + m._searchContext });
           apiMessages.push({ role: "assistant", content: "Noted, I have the search results with URLs available for reference." });

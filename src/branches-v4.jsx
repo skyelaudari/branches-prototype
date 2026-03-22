@@ -887,7 +887,6 @@ function BranchesPrototype() {
       const searchContext = data._searchContext || null;
       const files = data._files || null;
       const containerId = data._containerId || null;
-      if (data._debug) console.log("[Branches debug] API response:", JSON.stringify(data._debug));
       let coworkQuestion = null;
       const coworkMatch = reply.match(/<<COWORK_Q>>([\s\S]*?)<<(?:SUGGEST_COWORK|COWORK_Q)>>/);
       if (coworkMatch) {

@@ -39,26 +39,26 @@ async function executeToolCall(name, input) {
 // Extract file references from response content blocks (code execution results)
 function extractFiles(content) {
   const files = [];
-  for (const block of (content || [])) {
-    // Direct file_id on a block (e.g. code_execution_tool_result)
-    if (block.file_id) {
-      files.push({ file_id: block.file_id, filename: block.filename || null });
+  // Recursively search for file_id in any nested structure
+  function walk(obj) {
+    if (!obj || typeof obj !== "object") return;
+    if (obj.file_id) {
+      files.push({ file_id: obj.file_id, filename: obj.filename || null });
     }
-    // Nested content array (bash_code_execution_tool_result, server_tool_result, etc.)
-    const inner = Array.isArray(block.content) ? block.content : [];
-    for (const item of inner) {
-      if (item.file_id) {
-        files.push({ file_id: item.file_id, filename: item.filename || null });
+    // Check stdout for filename hints (e.g. "PDF created: /files/output/.../name.pdf")
+    if (obj.stdout && typeof obj.stdout === "string") {
+      const match = obj.stdout.match(/\/files\/output\/[^/]+\/([^\s\n]+)/);
+      if (match && files.length > 0 && !files[files.length - 1].filename) {
+        files[files.length - 1].filename = match[1];
       }
-      // Deeper nesting — some results have content.content
-      const deeper = Array.isArray(item.content) ? item.content : [];
-      for (const deep of deeper) {
-        if (deep.file_id) {
-          files.push({ file_id: deep.file_id, filename: deep.filename || null });
-        }
-      }
+    }
+    if (Array.isArray(obj)) {
+      obj.forEach(walk);
+    } else {
+      Object.values(obj).forEach(walk);
     }
   }
+  walk(content);
   return files;
 }
 
@@ -164,8 +164,6 @@ export default async function handler(req, res) {
         }
         if (allFiles.length > 0) data._files = allFiles;
         if (containerConfig?.id) data._containerId = containerConfig.id;
-        // Debug: include all content block types seen across all iterations
-        data._debug = { blockTypes: data.content.map(b => b.type), totalFiles: allFiles.length };
         return res.status(200).json(data);
       }
 

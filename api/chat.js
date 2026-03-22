@@ -164,6 +164,8 @@ export default async function handler(req, res) {
         }
         if (allFiles.length > 0) data._files = allFiles;
         if (containerConfig?.id) data._containerId = containerConfig.id;
+        // Debug: include all content block types seen across all iterations
+        data._debug = { blockTypes: data.content.map(b => b.type), totalFiles: allFiles.length };
         return res.status(200).json(data);
       }
 

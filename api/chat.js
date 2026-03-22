@@ -40,11 +40,21 @@ async function executeToolCall(name, input) {
 function extractFiles(content) {
   const files = [];
   for (const block of (content || [])) {
-    if (block.type === "bash_code_execution_tool_result") {
-      const inner = Array.isArray(block.content) ? block.content : [];
-      for (const item of inner) {
-        if (item.file_id) {
-          files.push({ file_id: item.file_id, filename: item.filename || null });
+    // Direct file_id on a block (e.g. code_execution_tool_result)
+    if (block.file_id) {
+      files.push({ file_id: block.file_id, filename: block.filename || null });
+    }
+    // Nested content array (bash_code_execution_tool_result, server_tool_result, etc.)
+    const inner = Array.isArray(block.content) ? block.content : [];
+    for (const item of inner) {
+      if (item.file_id) {
+        files.push({ file_id: item.file_id, filename: item.filename || null });
+      }
+      // Deeper nesting — some results have content.content
+      const deeper = Array.isArray(item.content) ? item.content : [];
+      for (const deep of deeper) {
+        if (deep.file_id) {
+          files.push({ file_id: deep.file_id, filename: deep.filename || null });
         }
       }
     }
@@ -124,6 +134,11 @@ export default async function handler(req, res) {
       // Collect any files from this response
       const iterFiles = extractFiles(data.content);
       allFiles.push(...iterFiles);
+      // Debug: log content block types for diagnosing file extraction
+      if (data.content) {
+        const blockTypes = data.content.map(b => b.type);
+        console.log("[chat] iteration", i, "stop_reason:", data.stop_reason, "block types:", blockTypes.join(", "), "files found:", iterFiles.length);
+      }
 
       // Handle pause_turn — code execution still running, continue the conversation
       if (data.stop_reason === "pause_turn") {
